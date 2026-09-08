@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+dist/
+.ruff_cache/
+
+# Private: architecture decision record, never published.
+docs/adr/

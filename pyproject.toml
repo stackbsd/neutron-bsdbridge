@@ -1,0 +1,22 @@
+[project]
+name = "neutron-bsdbridge"
+version = "0.9.1"
+description = "Neutron ML2 driver and L2 agent based on if_bridge and pf for FreeBSD"
+readme = "README.md"
+authors = [
+    { name = "joshiggins", email = "josh@joshh.info" }
+]
+license = {text = "Apache-2.0"}
+requires-python = ">=3.12"
+dependencies = []
+
+[project.entry-points."neutron.ml2.mechanism_drivers"]
+bsdbridge = "neutron_bsdbridge.mech:BsdBridgeMechanismDriver"
+
+[project.scripts]
+neutron-bsdbridge-l2-agent = "neutron_bsdbridge.agent:main"
+neutron-bsdbridge-dhcp-agent = "neutron_bsdbridge.dhcp_agent:main"
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"

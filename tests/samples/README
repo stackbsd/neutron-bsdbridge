@@ -1,0 +1,22 @@
+Captured ifconfig(8) and pfctl(8) output from a FreeBSD 15.1 host with a
+vtnet0 uplink, 2026-08-31. The parsers are tested against these files,
+never against live output; when the OS version changes, recapture first,
+then adjust the parser.
+
+Scenario at capture time (bridges carry the group, so ifconfig -g
+l2-neutron lists them too):
+  tapdeadbeef-00   group l2-neutron, descr 'neutron port 9999...', UP,
+                   member of pbd2db231d54fe, static addr entry
+                   58:9c:fc:10:ff:01 (the MAC-lock shape)
+  tapcafecafe-01   group l2-neutron, descr, created without up,
+                   member of pbd2db231d54fe
+  vtnet0.210       vlan child of vtnet0 (vid 210), group l2-neutron, descr
+                   with colons, member of pb813cccc1f779
+  pbd2db231d54fe   bridge with the two tap members
+  pb813cccc1f779   bridge with the vlan-child member
+  vtnet0           the plain hardware NIC
+  anchor l2-neutron/port/tapdeadbeef-00
+                   loaded with pf.render output for a filter with a
+                   443 pass, an ssh-from-<web-members> pass, an out
+                   pass, and the rendered deny; cfg hash
+                   16ad57d372cb4efb; table web-members with two members

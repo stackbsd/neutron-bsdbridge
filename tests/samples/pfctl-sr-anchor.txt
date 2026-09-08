@@ -1,0 +1,5 @@
+pass out quick on tapdeadbeef-00 inet proto tcp from any to any port = https flags S/SA keep state (if-bound) label "l2-neutron:tapdeadbeef-00"
+pass out quick on tapdeadbeef-00 inet proto tcp from <web-members> to any port = ssh flags S/SA keep state (if-bound) label "l2-neutron:tapdeadbeef-00"
+pass in quick on tapdeadbeef-00 all flags S/SA keep state (if-bound) label "l2-neutron:tapdeadbeef-00"
+block drop out quick on tapdeadbeef-00 all
+block drop in quick on tapdeadbeef-00 all label "l2-neutron:cfg:16ad57d372cb4efb"

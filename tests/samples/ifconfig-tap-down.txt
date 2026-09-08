@@ -1,0 +1,8 @@
+tapcafecafe-01: flags=8902<BROADCAST,PROMISC,SIMPLEX,MULTICAST> metric 0 mtu 1500
+	description: neutron port cafecafe-cccc-4444-aaaa-000000000000
+	options=4080000<LINKSTATE,MEXTPG>
+	ether 58:9c:fc:10:97:cd
+	groups: tap l2-neutron
+	media: Ethernet 1000baseT <full-duplex>
+	status: no carrier
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>

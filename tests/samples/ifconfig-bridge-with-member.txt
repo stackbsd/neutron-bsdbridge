@@ -1,0 +1,13 @@
+pbd2db231d54fe: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=10<VLAN_HWTAGGING>
+	ether 58:9c:fc:10:d8:96
+	id 00:00:00:00:00:00 priority 32768 hellotime 2 fwddelay 15
+	maxage 20 holdcnt 6 proto rstp maxaddr 2000 timeout 1200
+	root id 00:00:00:00:00:00 priority 32768 ifcost 0 port 0
+	bridge flags=0<>
+	member: tapcafecafe-01 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 6 priority 128 path cost 2000000 vlan protocol 802.1q
+	member: tapdeadbeef-00 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 5 priority 128 path cost 2000000 vlan protocol 802.1q
+	groups: bridge l2-neutron
+	nd6 options=9<PERFORMNUD,IFDISABLED>

@@ -1,0 +1,8 @@
+tapdeadbeef-00: flags=8903<UP,BROADCAST,PROMISC,SIMPLEX,MULTICAST> metric 0 mtu 1500
+	description: neutron port 99999999-8888-7777-6666-555555555555
+	options=4080000<LINKSTATE,MEXTPG>
+	ether 58:9c:fc:10:46:7b
+	groups: tap l2-neutron
+	media: Ethernet 1000baseT <full-duplex>
+	status: no carrier
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
