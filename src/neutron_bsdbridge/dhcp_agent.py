@@ -107,6 +107,7 @@ class BsdBridgeDhcpAgent:
         self.agent_state = {
             "binary": constants.DHCP_AGENT_BINARY,
             "host": self.host,
+            "availability_zone": conf.AGENT.availability_zone,
             "topic": topics.DHCP_AGENT,
             "agent_type": constants.AGENT_TYPE_DHCP,
             "configurations": {"dhcp_driver": "dnsmasq (vnet jail)"},
@@ -365,6 +366,7 @@ def main():
     """Console entrypoint for the dhcp agent."""
     common_config.register_common_config_options()
     agent_common_config.register_agent_state_opts_helper(cfg.CONF)
+    agent_common_config.register_availability_zone_opts_helper(cfg.CONF)
     common_config.init(sys.argv[1:])
     common_config.setup_logging()
     agent = BsdBridgeDhcpAgent(cfg.CONF)
