@@ -39,16 +39,33 @@ anchor "l2-neutron/port/*"
 
 ## Configuration
 
-neutron-server (`ml2_conf.ini`):
+`ml2_conf.ini`
 
 ```ini
 [ml2]
 mechanism_drivers = bsdbridge
 ```
 
-The agents (`bsdbridge_agent.ini`, a full sample is in `etc/`):
+`bsdbridge_agent.ini`
 
 ```ini
 [bsdbridge]
 physical_interface_mappings = physnet1:ix0
 ```
+
+Map the physical network name in OpenStack to the actual uplink/trunk interfaces on the host.
+
+For vlan networks, the L2 agent will create a vlan interface on top of the mapped physical interface and plug it to the respective bridge for you, but make sure that the actual network trunks those VLAN between hosts.
+
+You can enable self-service/tenant networks based on VLANs by configuring a range of IDs that can be used:
+
+``` ini
+[ml2]
+tenant_network_types = vlan
+
+[ml2_type_vlan]
+network_vlan_ranges = physnet1:100:199
+```
+
+Now any networks created in non-admin projects will be allocated a vlan segment automatically (the `ix0.<vid>` uplink is created and plugged by the L2 agent).
+Same as above, ensure that the network fabric actually trunks this range of VLAN IDs to the interface on each host which is mapped in `physical_interface_mappings`.
