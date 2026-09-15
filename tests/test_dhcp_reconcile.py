@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from neutron_bsdbridge.dhcp_agent import dnsmasq
 from neutron_bsdbridge.dhcp_agent import reconcile as dhcp_reconcile
+from tests import jail_fake
 
 NET = dnsmasq.DhcpNetwork(
     network_id="590dc57a-8b5e-4b94-b743-74e7d9a1b792",
@@ -28,53 +29,20 @@ NET = dnsmasq.DhcpNetwork(
 DNSMASQ_PID = "4242"
 
 
-class FakeKernel:
-    """A stateful scripted kernel for the dhcp plane."""
+class FakeKernel(jail_fake.FakeKernel):
+    """The jail plane plus a dnsmasq that daemonizes and writes its pidfile."""
 
     def __init__(self):
-        self.jails = {}  # name -> jid
-        self.host_ifaces = {}  # name -> {groups, descr}
-        self.jail_ifaces = {}  # (jail, name) -> {mac, inets}
+        super().__init__()
         self.dnsmasq_running = False
-        self.calls = []
-        self._epair_seq = 0
-        self._jid_seq = 10
 
-    def _jail_if_text(self, jail, name):
-        entry = self.jail_ifaces[(jail, name)]
-        lines = [
-            f"{name}: flags=8843<UP,BROADCAST> metric 0 mtu 1500",
-            f"\tether {entry['mac']}",
-        ]
-        for addr in entry["inets"]:
-            lines.append(f"\tinet {addr} netmask 0xffffff00")
-        lines.append("\tgroups: epair")
-        return "\n".join(lines) + "\n"
+    def pkill(self, argv):
+        killed = self.dnsmasq_running
+        self.dnsmasq_running = False
+        return (0, "", "") if killed else (1, "", "")
 
-    def __call__(self, argv, timeout=None, input=None):
-        self.calls.append(argv)
+    def host(self, argv):
         prog = argv[0]
-        if prog == dhcp_reconcile.JLS:
-            if argv[1] == "name":
-                return 0, "".join(j + "\n" for j in self.jails), ""
-            if argv[1] == "-j":
-                jail = argv[2]
-                if jail in self.jails:
-                    return 0, str(self.jails[jail]) + "\n", ""
-                return 1, "", "no such jail"
-        if prog == dhcp_reconcile.JAIL:
-            if argv[1] == "-c":
-                name = argv[2].split("=", 1)[1]
-                self._jid_seq += 1
-                self.jails[name] = self._jid_seq
-                return 0, "", ""
-            if argv[1] == "-r":
-                self.jails.pop(argv[2], None)
-                return 0, "", ""
-        if prog == dhcp_reconcile.PKILL:
-            killed = self.dnsmasq_running
-            self.dnsmasq_running = False
-            return (0, "", "") if killed else (1, "", "")
         if prog == dhcp_reconcile.PS:
             pid = argv[2]
             if self.dnsmasq_running and pid == DNSMASQ_PID:
@@ -85,101 +53,17 @@ class FakeKernel:
                 return 0, "", ""
             self.dnsmasq_running = False
             return 0, "", ""
-        if prog == dhcp_reconcile.JEXEC:
-            jail = argv[1]
-            inner = argv[2:]
-            if jail not in self.jails:
-                return 1, "", "jail not found"
-            if inner[0] == dhcp_reconcile.IFCONFIG:
-                return self._ifconfig(inner[1:], jail=jail)
-            # daemonize and write the pidfile like dnsmasq would
-            if inner[0].endswith("dnsmasq"):
-                pid_arg = next(a for a in inner if a.startswith("--pid-file="))
-                path = pid_arg.split("=", 1)[1]
-                with open(path, "w") as f:
-                    f.write(DNSMASQ_PID + "\n")
-                self.dnsmasq_running = True
-                return 0, "", ""
-        if prog == dhcp_reconcile.IFCONFIG:
-            return self._ifconfig(argv[1:], jail=None)
         raise AssertionError(f"unscripted argv: {argv}")
 
-    def _ifconfig(self, args, jail):
-        ifaces = self.host_ifaces
-        if args == ("-g", "dhcp-neutron"):
-            names = [
-                n for n, entry in ifaces.items() if "dhcp-neutron" in entry["groups"]
-            ]
-            return 0, "".join(n + "\n" for n in names), ""
-        if args[0] == "epair" and args[1] == "create":
-            a_end = f"epair{self._epair_seq}a"
-            b_end = f"epair{self._epair_seq}b"
-            self._epair_seq += 1
-            ifaces[a_end] = {"groups": set(), "descr": ""}
-            ifaces[b_end] = {"groups": set(), "descr": ""}
-            return 0, a_end + "\n", ""
-        name = args[0]
-        rest = args[1:]
-        if jail is None:
-            if name not in ifaces:
-                return 1, "", "does not exist"
-            if not rest:
-                entry = ifaces[name]
-                text = f"{name}: flags=8843<UP> metric 0 mtu 1500\n"
-                if entry["descr"]:
-                    text += f"\tdescription: {entry['descr']}\n"
-                return 0, text, ""
-            if rest[0] == "destroy":
-                del ifaces[name]
-                other = (name[:-1] + "b") if name.endswith("a") else None
-                if other:
-                    ifaces.pop(other, None)
-                return 0, "", ""
-            if rest[0] == "descr":
-                ifaces[name]["descr"] = rest[1]
-                return 0, "", ""
-            if rest[0] == "name":
-                entry = ifaces.pop(name)
-                new = rest[1]
-                if "group" in rest:
-                    entry["groups"].add(rest[rest.index("group") + 1])
-                if "descr" in rest:
-                    entry["descr"] = rest[rest.index("descr") + 1]
-                ifaces[new] = entry
-                return 0, new + "\n", ""
-            if rest[0] == "vnet":
-                ifaces.pop(name)
-                self.jail_ifaces[(rest[1], name)] = {
-                    "mac": "58:9c:fc:00:00:99",
-                    "inets": [],
-                }
-                return 0, "", ""
-        else:
-            if name == "lo0":
-                return 0, "", ""
-            key = (jail, name)
-            if key not in self.jail_ifaces:
-                return 1, "", "does not exist"
-            if not rest:
-                return 0, self._jail_if_text(jail, name), ""
-            if rest[0] == "name":
-                self.jail_ifaces[(jail, rest[1])] = self.jail_ifaces.pop(key)
-                return 0, rest[1] + "\n", ""
-            if rest[0] == "destroy":
-                del self.jail_ifaces[key]
-                return 0, "", ""
-            if rest[0] == "ether":
-                self.jail_ifaces[key]["mac"] = rest[1]
-                return 0, "", ""
-            if rest[0] == "inet":
-                addr = rest[1].split("/")[0]
-                self.jail_ifaces[key]["inets"].append(addr)
-                return 0, "", ""
-            if name == "lo0" or rest == ("lo0", "up"):
-                return 0, "", ""
-        if name == "lo0":
+    def jexec(self, jail_name, inner):
+        if inner[0].endswith("dnsmasq"):
+            pid_arg = next(a for a in inner if a.startswith("--pid-file="))
+            path = pid_arg.split("=", 1)[1]
+            with open(path, "w") as f:
+                f.write(DNSMASQ_PID + "\n")
+            self.dnsmasq_running = True
             return 0, "", ""
-        raise AssertionError(f"unscripted ifconfig: {args} jail={jail}")
+        raise AssertionError(f"unscripted jexec: {jail_name} {inner}")
 
 
 class ReconcileTestCase(unittest.TestCase):

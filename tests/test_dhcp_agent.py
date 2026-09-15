@@ -12,8 +12,7 @@ try:
 except ImportError:
     raise unittest.SkipTest("needs neutron libs; run under the neutron venv")
 
-from neutron_bsdbridge import names  # noqa: E402
-from neutron_bsdbridge.dhcp_agent import reconcile as dhcp_reconcile  # noqa: E402
+from neutron_bsdbridge import jail, names  # noqa: E402
 
 NET_ID = "590dc57a-8b5e-4b94-b743-74e7d9a1b792"
 SUBNET_ID = "daa048b5-450c-4c4b-97a6-c5f5542289c4"
@@ -114,7 +113,7 @@ class ReconcileRecorder:
 
     def __call__(self, desired, base, dnsmasq_path=None):
         self.calls.append(desired)
-        return dhcp_reconcile.Result([])
+        return jail.Result([])
 
 
 def make_agent(networks):
