@@ -39,6 +39,11 @@ def dhcp_if_name(port_id):
     return "dh" + port_id[:13]
 
 
+def router_if_name(port_id):
+    """Return the host-side epair name for a router port."""
+    return "rt" + port_id[:13]
+
+
 def dhcp_jail_name(network_id):
     """Return the name of the VNET jail a network's dhcp server runs in."""
     return "qdhcp-" + network_id.replace("-", "")[:12]

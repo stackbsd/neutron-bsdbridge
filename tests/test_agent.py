@@ -270,6 +270,25 @@ class DhcpIfDiscoveryTestCase(unittest.TestCase):
         a._sync()
         self.assertIn(PORT_ID, a._candidates)
 
+    def test_router_if_description_feeds_the_candidate_set(self):
+        a = make_agent(self.tmp.name, devices={PORT_ID})
+
+        def run(argv):
+            if argv[-2:] == ("-g", "l3-neutron"):
+                return 0, "rt3fb01977-a4e\n", ""
+            if argv[-1] == "rt3fb01977-a4e":
+                text = (
+                    "rt3fb01977-a4e: flags=8843<UP> metric 0 mtu 1500\n"
+                    "\tdescription: neutron port " + PORT_ID + "\n"
+                    "\tgroups: epair l3-neutron\n"
+                )
+                return 0, text, ""
+            return 1, "", ""
+
+        a._run = run
+        a._sync()
+        self.assertIn(PORT_ID, a._candidates)
+
 
 class BindingRaceTestCase(unittest.TestCase):
     def setUp(self):

@@ -199,6 +199,20 @@ class ServicePortTestCase(unittest.TestCase):
         self.assertEqual({}, cfg.filter)
         self.assertEqual([p["port_id"]], devices)
 
+    def test_router_ports_are_attached_hardware_without_policy(self):
+        for owner in ("network:router_interface", "network:router_gateway"):
+            p = port(device_owner=owner)
+            cfg, devices = port_config.build([p], {}, {})
+            bridge = names.bridge_name(
+                "local", None, None, "b716de99-4bd1-4b58-a52e-b0b8ab779b74"
+            )
+            member = cfg.bridge[bridge].member[names.router_if_name(p["port_id"])]
+            self.assertIsNone(member.type, "the l3 agent manufactures the epair")
+            self.assertIsNone(member.filter)
+            self.assertIsNone(member.bind)
+            self.assertEqual({}, cfg.filter)
+            self.assertEqual([p["port_id"]], devices)
+
     def test_port_security_disabled_means_plain_switching(self):
         p = port(port_security_enabled=False)
         cfg, _ = port_config.build([p], SG_INFO, {})
