@@ -3,9 +3,8 @@
 import hashlib
 import re
 
+from neutron_bsdbridge.constants import PFCTL
 from neutron_bsdbridge.utils import default_run
-
-PFCTL = "/sbin/pfctl"
 
 ANCHOR_PREFIX = "l2-neutron/port/"
 

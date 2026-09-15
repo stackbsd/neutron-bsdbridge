@@ -20,6 +20,7 @@ DEVICE_OWNER_DHCP = "network:dhcp"
 DEVICE_OWNER_ROUTER_INTF = "network:router_interface"
 DEVICE_OWNER_ROUTER_GW = "network:router_gateway"
 
+PFCTL = "/sbin/pfctl"
 DNSMASQ = "/usr/local/sbin/dnsmasq"
 STATE_PATH = "/var/db/neutron-bsdbridge"
 DEVD_PIPE = "/var/run/devd.seqpacket.pipe"

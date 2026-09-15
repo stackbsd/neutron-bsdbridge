@@ -174,6 +174,16 @@ class ReconcileTestCase(unittest.TestCase):
             os.path.exists(os.path.join(self.tmp.name, "dhcp", NET.network_id))
         )
 
+    def test_stale_address_is_dropped(self):
+        """An address the port no longer carries is removed from the jail end."""
+        self._reconcile([NET])
+        self.kernel.jail_ifaces[(NET.jail, "dhcp0")]["inets"].append(("10.99.0.9", 24))
+        result = self._reconcile([NET])
+        self.assertEqual(["DropJailIfInet"], [r.op for r in result.receipts])
+        self.assertEqual(
+            [("10.99.0.2", 24)], self.kernel.jail_ifaces[(NET.jail, "dhcp0")]["inets"]
+        )
+
     def test_dead_dnsmasq_is_restarted(self):
         """A dnsmasq that died is simply started again."""
         self._reconcile([NET])

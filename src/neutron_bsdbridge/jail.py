@@ -159,6 +159,11 @@ def ensure_addrs(acts, jail, jail_if, jail_if_text, mac, ips):
         argv += ["up"] if first else ["alias"]
         first = False
         acts.do("SetJailIfInet", tuple(argv))
+    for addr, prefixlen in sorted(have - set(ips)):
+        acts.do(
+            "DropJailIfInet",
+            (JEXEC, jail, IFCONFIG, jail_if, "inet", f"{addr}/{prefixlen}", "-alias"),
+        )
 
 
 def collect(acts, jails, desired_jails, host_ifs, desired_ifs):
