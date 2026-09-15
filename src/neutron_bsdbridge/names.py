@@ -49,6 +49,16 @@ def dhcp_jail_name(network_id):
     return "qdhcp-" + network_id.replace("-", "")[:12]
 
 
+def router_jail_name(router_id):
+    """Return the name of the VNET jail a router runs in."""
+    return "qrouter-" + router_id.replace("-", "")[:12]
+
+
+def router_jail_if_name(port_id, gateway=False):
+    """Return the jail-side interface name for a router port."""
+    return ("qg-" if gateway else "qr-") + port_id[:11]
+
+
 def dhcp_device_id(network_id, host):
     """Return the dhcp port's device_id in neutron's own convention."""
     # must match neutron.common.utils.get_dhcp_agent_device_id or the
