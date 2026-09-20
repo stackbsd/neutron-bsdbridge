@@ -18,5 +18,5 @@ neutron-bsdbridge-l2-agent = "neutron_bsdbridge.agent:main"
 neutron-bsdbridge-dhcp-agent = "neutron_bsdbridge.dhcp_agent:main"
 
 [build-system]
-requires = ["uv_build>=0.11.28,<0.12.0"]
+requires = ["uv_build>=0.11.28"]
 build-backend = "uv_build"
