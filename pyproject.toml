@@ -1,6 +1,6 @@
 [project]
 name = "neutron-bsdbridge"
-version = "0.9.1"
+version = "0.0.0"
 description = "Neutron ML2 driver and L2 agent based on if_bridge and pf for FreeBSD"
 readme = "README.md"
 authors = [
