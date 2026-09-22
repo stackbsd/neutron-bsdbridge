@@ -1,4 +1,4 @@
-"""Desired-state model from neutron RPC data."""
+"""Port config built from neutron RPC data."""
 
 from oslo_log import log as logging
 

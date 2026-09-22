@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 try:
     from neutron_bsdbridge import names
-    from neutron_bsdbridge.l2_agent import desired
+    from neutron_bsdbridge.l2_agent import port_config
 except ImportError:
     raise unittest.SkipTest("needs oslo libs; run under the neutron venv")
 
@@ -64,7 +64,7 @@ SG_INFO = {
 class DesiredTestCase(unittest.TestCase):
     def setUp(self):
         super().setUp()
-        self.cfg, self.devices = desired.build([port()], SG_INFO, {})
+        self.cfg, self.devices = port_config.build([port()], SG_INFO, {})
 
     def _filter(self):
         return self.cfg.filter[
@@ -131,7 +131,7 @@ class DesiredTestCase(unittest.TestCase):
             },
             "sg_member_ips": {},
         }
-        cfg, _ = desired.build([port()], info, {})
+        cfg, _ = port_config.build([port()], info, {})
         f = cfg.filter[names.filter_name("3fb01977-a4e2-4a28-9a6f-1f0a3a2b4c5d")]
         sg_rules = {k: v for k, v in f.in_.items() if k >= 100}
         self.assertEqual({}, sg_rules)
@@ -146,7 +146,7 @@ class DesiredTestCase(unittest.TestCase):
 
     def test_two_ports_one_network_share_the_bridge_stanza(self):
         p2 = port(port_id="99999999-4bd1-4b58-a52e-b0b8ab779b74")
-        cfg, devices = desired.build([port(), p2], SG_INFO, {})
+        cfg, devices = port_config.build([port(), p2], SG_INFO, {})
         self.assertEqual(1, len(cfg.bridge))
         members = next(iter(cfg.bridge.values())).member
         self.assertEqual(2, len(members))
@@ -161,7 +161,7 @@ class DesiredTestCase(unittest.TestCase):
 
     def test_vlan_port_gets_its_segment_via_the_mapping(self):
         p = port(network_type="vlan", physical_network="physnet1", segmentation_id=210)
-        cfg, _ = desired.build([p], SG_INFO, {"physnet1": "vtnet1"})
+        cfg, _ = port_config.build([p], SG_INFO, {"physnet1": "vtnet1"})
         bridge = names.bridge_name("vlan", "physnet1", 210, "x")
         seg = cfg.bridge[bridge].segment
         self.assertEqual("physnet1", seg.physnet)
@@ -171,7 +171,7 @@ class DesiredTestCase(unittest.TestCase):
 
     def test_flat_port_gets_a_flat_segment(self):
         p = port(network_type="flat", physical_network="physnet1")
-        cfg, _ = desired.build([p], SG_INFO, {"physnet1": "vtnet1"})
+        cfg, _ = port_config.build([p], SG_INFO, {"physnet1": "vtnet1"})
         bridge = names.bridge_name("flat", "physnet1", None, "x")
         seg = cfg.bridge[bridge].segment
         self.assertEqual("physnet1", seg.physnet)
@@ -179,7 +179,7 @@ class DesiredTestCase(unittest.TestCase):
 
     def test_unmapped_physnet_renders_without_uplink(self):
         p = port(network_type="vlan", physical_network="ghostnet", segmentation_id=210)
-        cfg, devices = desired.build([p], SG_INFO, {})
+        cfg, devices = port_config.build([p], SG_INFO, {})
         bridge = names.bridge_name("vlan", "ghostnet", 210, "x")
         self.assertIsNone(cfg.bridge[bridge].segment)
         self.assertEqual(1, len(devices))
@@ -188,7 +188,7 @@ class DesiredTestCase(unittest.TestCase):
 class ServicePortTestCase(unittest.TestCase):
     def test_dhcp_port_is_attached_hardware_without_policy(self):
         p = port(device_owner="network:dhcp")
-        cfg, devices = desired.build([p], {}, {})
+        cfg, devices = port_config.build([p], {}, {})
         bridge = names.bridge_name(
             "local", None, None, "b716de99-4bd1-4b58-a52e-b0b8ab779b74"
         )
@@ -201,7 +201,7 @@ class ServicePortTestCase(unittest.TestCase):
 
     def test_port_security_disabled_means_plain_switching(self):
         p = port(port_security_enabled=False)
-        cfg, _ = desired.build([p], SG_INFO, {})
+        cfg, _ = port_config.build([p], SG_INFO, {})
         member = next(iter(cfg.bridge.values())).member["tap3fb01977-a4"]
         self.assertEqual("tap", member.type)
         self.assertIsNone(member.filter)

@@ -25,7 +25,7 @@ from oslo_log import log as logging
 
 from neutron_bsdbridge import config as bsdbridge_config
 from neutron_bsdbridge import constants, ifconfig, names
-from neutron_bsdbridge.l2_agent import desired
+from neutron_bsdbridge.l2_agent import port_config
 from neutron_bsdbridge.l2_agent import reconcile as reconcile_mod
 from neutron_bsdbridge.l2_agent import writer as writer_mod
 from neutron_bsdbridge.utils import default_run
@@ -217,7 +217,7 @@ class BsdBridgeAgent:
             )
 
         # build and reconcile
-        config, rendered_devices = desired.build(
+        config, rendered_devices = port_config.build(
             details, sg_info, self.conf.bsdbridge.physical_interface_mappings
         )
         result = reconcile_mod.reconcile(
