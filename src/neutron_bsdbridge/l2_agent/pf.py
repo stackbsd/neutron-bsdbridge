@@ -3,7 +3,7 @@
 import hashlib
 import re
 
-from neutron_bsdbridge.utils import default_runner
+from neutron_bsdbridge.utils import default_run
 
 PFCTL = "/sbin/pfctl"
 
@@ -134,20 +134,20 @@ def parse_table_show(text):
     return frozenset(line.strip() for line in (text or "").splitlines() if line.strip())
 
 
-def read_anchor(ifname, runner=default_runner):
+def read_anchor(ifname, run=default_run):
     """Read one anchor's state through pfctl."""
     anchor = anchor_name(ifname)
-    out = runner((PFCTL, "-a", anchor, "-sr"))
-    if out is None:
+    rc, out, _err = run((PFCTL, "-a", anchor, "-sr"))
+    if rc != 0:
         return AnchorState(exists=False)
     cfg_hash = parse_rules_hash(out)
     if cfg_hash is None and not out.strip():
         return AnchorState(exists=False)
     tables = {}
-    names = runner((PFCTL, "-a", anchor, "-sT"))
-    for name in (names or "").split():
-        members = runner((PFCTL, "-a", anchor, "-t", name, "-T", "show"))
-        if members is not None:
+    _rc, names, _err = run((PFCTL, "-a", anchor, "-sT"))
+    for name in names.split():
+        rc, members, _err = run((PFCTL, "-a", anchor, "-t", name, "-T", "show"))
+        if rc == 0:
             tables[name] = parse_table_show(members)
     return AnchorState(exists=True, cfg_hash=cfg_hash, tables=tables)
 
@@ -179,19 +179,19 @@ def kill_port_states(ifname, run):
     return len(ids)
 
 
-def read_anchors(ifnames, runner=default_runner):
+def read_anchors(ifnames, run=default_run):
     """Read the AnchorState for each named interface."""
-    return {name: read_anchor(name, runner) for name in ifnames}
+    return {name: read_anchor(name, run) for name in ifnames}
 
 
-def list_anchors(runner=default_runner):
+def list_anchors(run=default_run):
     """List the interfaces with a per-port anchor loaded right now."""
     # an anchor flushed empty disappears from the listing
-    out = runner((PFCTL, "-a", ANCHOR_PREFIX.rstrip("/"), "-sA"))
-    if out is None:
+    rc, out, _err = run((PFCTL, "-a", ANCHOR_PREFIX.rstrip("/"), "-sA"))
+    if rc != 0:
         return []
     names = []
-    for line in (out or "").splitlines():
+    for line in out.splitlines():
         line = line.strip()
         if line.startswith(ANCHOR_PREFIX):
             names.append(line[len(ANCHOR_PREFIX) :])

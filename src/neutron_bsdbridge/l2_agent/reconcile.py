@@ -6,7 +6,7 @@ from neutron_bsdbridge import ifconfig
 from neutron_bsdbridge.l2_agent import pf as pf_mod
 from neutron_bsdbridge.l2_agent import plan as plan_mod
 from neutron_bsdbridge.l2_agent import writer as writer_mod
-from neutron_bsdbridge.utils import default_runner
+from neutron_bsdbridge.utils import default_run
 
 
 def names_to_check(config):
@@ -57,15 +57,15 @@ def pf_scope(config, kernel):
     return names
 
 
-def reconcile(config, writer=None, reader=None, pf_reader=None, runner=default_runner):
+def reconcile(config, writer=None, reader=None, pf_reader=None, run=default_run):
     """Run one pass that reads the kernel, diffs, applys the plan."""
     writer = writer or writer_mod.Writer(dry_run=True)
     names = names_to_check(config)
-    kernel = reader(names) if reader else ifconfig.read_interfaces(names, runner)
+    kernel = reader(names) if reader else ifconfig.read_interfaces(names, run)
     scope = pf_scope(config, kernel)
     if pf_reader is None:
-        scope.update(pf_mod.list_anchors(runner))
-        pf_state = pf_mod.read_anchors(sorted(scope), runner)
+        scope.update(pf_mod.list_anchors(run))
+        pf_state = pf_mod.read_anchors(sorted(scope), run)
     else:
         pf_state = pf_reader(sorted(scope))
     the_plan = plan_mod.diff(config, kernel, pf_state=pf_state)

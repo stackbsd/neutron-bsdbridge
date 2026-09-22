@@ -6,14 +6,6 @@ import subprocess
 TIMEOUT = "timeout"
 
 
-def default_runner(argv):
-    """Run one query argv and return stdout, or None when the target is absent."""
-    proc = subprocess.run(argv, capture_output=True, text=True)
-    if proc.returncode != 0:
-        return None
-    return proc.stdout
-
-
 def default_run(argv, timeout=None, input=None):
     """Execute one argv and return (rc, stdout, stderr)."""
     try:
