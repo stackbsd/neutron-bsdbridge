@@ -7,7 +7,8 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 try:
-    from neutron_bsdbridge import desired, names
+    from neutron_bsdbridge import names
+    from neutron_bsdbridge.l2_agent import desired
 except ImportError:
     raise unittest.SkipTest("needs oslo libs; run under the neutron venv")
 

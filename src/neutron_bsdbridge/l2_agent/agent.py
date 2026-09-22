@@ -24,9 +24,10 @@ from oslo_config import cfg
 from oslo_log import log as logging
 
 from neutron_bsdbridge import config as bsdbridge_config
-from neutron_bsdbridge import constants, desired, ifconfig, names
-from neutron_bsdbridge import reconcile as reconcile_mod
-from neutron_bsdbridge import writer as writer_mod
+from neutron_bsdbridge import constants, ifconfig, names
+from neutron_bsdbridge.l2_agent import desired
+from neutron_bsdbridge.l2_agent import reconcile as reconcile_mod
+from neutron_bsdbridge.l2_agent import writer as writer_mod
 from neutron_bsdbridge.utils import default_runner
 
 LOG = logging.getLogger(__name__)

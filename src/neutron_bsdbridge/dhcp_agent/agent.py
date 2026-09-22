@@ -21,8 +21,9 @@ from oslo_config import cfg
 from oslo_log import log as logging
 
 from neutron_bsdbridge import config as bsdbridge_config
-from neutron_bsdbridge import constants, dhcp_reconcile, names
-from neutron_bsdbridge import dnsmasq as dnsmasq_mod
+from neutron_bsdbridge import constants, names
+from neutron_bsdbridge.dhcp_agent import dnsmasq as dnsmasq_mod
+from neutron_bsdbridge.dhcp_agent import reconcile as reconcile_mod
 
 LOG = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ class BsdBridgeDhcpAgent:
         self.plugin_rpc = plugin_rpc or DhcpPluginApi(conf.host)
         self.state_rpc = agent_rpc.PluginReportStateAPI(topics.REPORTS)
         self.context = n_context.get_admin_context_without_session()
-        self._reconcile = reconcile or dhcp_reconcile.reconcile
+        self._reconcile = reconcile or reconcile_mod.reconcile
         self._dirty = True
         self._failures = 0
         self._ready = set()

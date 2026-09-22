@@ -9,9 +9,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from neutron_bsdbridge import (
-    ifconfig,
-)
+from neutron_bsdbridge import ifconfig
 
 SAMPLES = os.path.join(os.path.dirname(__file__), "samples")
 

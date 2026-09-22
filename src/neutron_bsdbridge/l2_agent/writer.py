@@ -1,49 +1,15 @@
 """Writer to apply the plan to the running kernel."""
 
-import dataclasses
-import subprocess
-
 from neutron_bsdbridge import ifconfig
-from neutron_bsdbridge import plan as plan_mod
 from neutron_bsdbridge.constants import OWNED_GROUP
 from neutron_bsdbridge.ifconfig import IFCONFIG
-from neutron_bsdbridge.pf import PFCTL, anchor_name
-from neutron_bsdbridge.pf import kill_port_states as pf_state_kill
+from neutron_bsdbridge.l2_agent import plan as plan_mod
+from neutron_bsdbridge.l2_agent.pf import PFCTL, anchor_name
+from neutron_bsdbridge.l2_agent.pf import kill_port_states as pf_state_kill
+from neutron_bsdbridge.utils import TIMEOUT, Receipt, default_run
 
 # destroying a held tap blocks in the ioctl until the holder exits
 DESTROY_TIMEOUT = 5
-
-TIMEOUT = "timeout"
-
-
-def default_run(argv, timeout=None, input=None):
-    """Execute one argv and return (rc, stdout, stderr)."""
-    try:
-        proc = subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeout, input=input
-        )
-    except subprocess.TimeoutExpired:
-        return TIMEOUT, "", ""
-    return proc.returncode, proc.stdout, proc.stderr
-
-
-@dataclasses.dataclass
-class Receipt:
-    """What happened to one op."""
-
-    op: object
-    argv: tuple
-    executed: bool
-    ok: bool
-    parked: bool = False
-    note: str = ""
-
-    def __str__(self):
-        """Render the receipt as its state, argv, and note."""
-        state = "ok" if self.ok else "parked" if self.parked else "FAILED"
-        body = " ".join(self.argv) if self.argv else "(no invocation)"
-        tail = f" # {self.note}" if self.note else ""
-        return f"[{state}] {body}{tail}"
 
 
 def argv_for(op):
@@ -127,7 +93,7 @@ class Writer:
     """Apply plans, emitting argv in dry-run and executing them otherwise."""
 
     def __init__(self, dry_run=True, run=default_run):
-        """Wire up the runner."""
+        """Wire up the run callable."""
         self.dry_run = dry_run
         self._run = run
 

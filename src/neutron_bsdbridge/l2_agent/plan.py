@@ -2,7 +2,7 @@
 
 import dataclasses
 
-from neutron_bsdbridge import model, pf
+from neutron_bsdbridge.l2_agent import model, pf
 
 VXLAN_UPLINK = "vx{vni}p{idx}"
 

@@ -2,7 +2,8 @@
 
 from oslo_log import log as logging
 
-from neutron_bsdbridge import constants, model, names
+from neutron_bsdbridge import constants, names
+from neutron_bsdbridge.l2_agent import model
 
 LOG = logging.getLogger(__name__)
 

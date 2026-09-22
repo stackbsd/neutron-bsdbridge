@@ -7,7 +7,8 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
-from neutron_bsdbridge import ifconfig, model, pf, plan
+from neutron_bsdbridge import ifconfig
+from neutron_bsdbridge.l2_agent import model, pf, plan
 
 
 def make_filter(**sections):

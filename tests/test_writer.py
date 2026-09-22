@@ -6,11 +6,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from neutron_bsdbridge import (
-    plan,
-    reconcile,
-    writer,
-)
+from neutron_bsdbridge import utils
+from neutron_bsdbridge.l2_agent import plan, reconcile, writer
 
 
 class ArgvTestCase(unittest.TestCase):
@@ -134,7 +131,7 @@ class FakeRunner:
             return (0, text, "") if text else (1, "", "does not exist")
         target = argv[1]
         if target in self.hang:
-            return (writer.TIMEOUT, "", "")
+            return (utils.TIMEOUT, "", "")
         if target in self.fail:
             return (1, "", "refused")
         return (0, "", "")
@@ -220,7 +217,8 @@ class ReconcileWiringTestCase(unittest.TestCase):
 
     def test_reconcile_is_read_diff_apply(self):
         """The reconcile pass reads the config's names, diffs, and applies."""
-        from neutron_bsdbridge import ifconfig, model
+        from neutron_bsdbridge import ifconfig
+        from neutron_bsdbridge.l2_agent import model
 
         cfg = model.Config.from_tree({"bridge": {"lone": {"member": {}}}})
         calls = []
@@ -242,14 +240,14 @@ class ReconcileWiringTestCase(unittest.TestCase):
 
     def test_parked_receipts_are_not_failures(self):
         """Result.failed excludes parked receipts."""
-        parked = writer.Receipt(
+        parked = utils.Receipt(
             op=plan.DestroyIface(name="tapx"),
             argv=(),
             executed=True,
             ok=False,
             parked=True,
         )
-        failed = writer.Receipt(
+        failed = utils.Receipt(
             op=plan.CreateTap(name="tapy", description=""),
             argv=(),
             executed=True,

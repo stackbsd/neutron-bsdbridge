@@ -5,9 +5,9 @@ import re
 import shutil
 
 from neutron_bsdbridge import constants, ifconfig
-from neutron_bsdbridge import dnsmasq as dnsmasq_mod
+from neutron_bsdbridge.dhcp_agent import dnsmasq as dnsmasq_mod
 from neutron_bsdbridge.ifconfig import IFCONFIG
-from neutron_bsdbridge.writer import Receipt, default_run
+from neutron_bsdbridge.utils import Receipt, default_run
 
 JLS = "/usr/sbin/jls"
 JAIL = "/usr/sbin/jail"

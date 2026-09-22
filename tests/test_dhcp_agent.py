@@ -8,11 +8,12 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 try:
-    from neutron_bsdbridge import dhcp_agent as dhcp_agent_mod
+    from neutron_bsdbridge.dhcp_agent import agent as dhcp_agent_mod
 except ImportError:
     raise unittest.SkipTest("needs neutron libs; run under the neutron venv")
 
-from neutron_bsdbridge import dhcp_reconcile, names  # noqa: E402
+from neutron_bsdbridge import names  # noqa: E402
+from neutron_bsdbridge.dhcp_agent import reconcile as dhcp_reconcile  # noqa: E402
 
 NET_ID = "590dc57a-8b5e-4b94-b743-74e7d9a1b792"
 SUBNET_ID = "daa048b5-450c-4c4b-97a6-c5f5542289c4"

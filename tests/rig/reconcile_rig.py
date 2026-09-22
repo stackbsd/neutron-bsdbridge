@@ -11,7 +11,8 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from neutron_bsdbridge import ifconfig, model, reconcile, writer
+from neutron_bsdbridge import ifconfig
+from neutron_bsdbridge.l2_agent import model, reconcile, writer
 
 UPLINK = sys.argv[1] if len(sys.argv) > 1 else "vtnet0"
 TAP = "tap0000green-0"
