@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from neutron_bsdbridge.constants import PFCTL
+from neutron_bsdbridge import constants
 from neutron_bsdbridge.l3_agent import reconcile as l3_reconcile
 from neutron_bsdbridge.l3_agent import router
 from tests import jail_fake
@@ -52,13 +52,13 @@ class FakeKernel(jail_fake.FakeKernel):
 
     def jexec(self, jail_name, inner):
         prog = inner[0]
-        if prog == l3_reconcile.SYSCTL:
+        if prog == constants.SYSCTL:
             if inner[1] == "-n":
                 return 0, self.forwarding.get(jail_name, "0") + "\n", ""
             key, value = inner[1].split("=")
             self.forwarding[jail_name] = value
             return 0, f"{key}: 0 -> {value}\n", ""
-        if prog == l3_reconcile.NETSTAT:
+        if prog == constants.NETSTAT:
             lines = [
                 "Routing tables",
                 "",
@@ -70,7 +70,7 @@ class FakeKernel(jail_fake.FakeKernel):
                 lines.append(f"{shown:18} {gw:18} UGS  qg-x")
             lines.append("10.0.0.0/24        link#2             U    qr-x")
             return 0, "\n".join(lines) + "\n", ""
-        if prog == l3_reconcile.ROUTE:
+        if prog == constants.ROUTE:
             routes = self.routes.setdefault(jail_name, set())
             dest = router.normalize_destination(inner[3])
             if inner[2] == "add":
@@ -78,7 +78,7 @@ class FakeKernel(jail_fake.FakeKernel):
                 return 0, "", ""
             routes.difference_update({r for r in routes if r[0] == dest})
             return 0, "", ""
-        if prog == PFCTL:
+        if prog == constants.PFCTL:
             if inner[1] == "-si":
                 state = "Enabled" if self.pf_enabled.get(jail_name) else "Disabled"
                 return 0, f"Status: {state} for 0 days 00:00:01\n", ""

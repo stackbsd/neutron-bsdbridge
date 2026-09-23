@@ -5,12 +5,9 @@ import re
 import shutil
 
 from neutron_bsdbridge import constants, jail
+from neutron_bsdbridge.constants import JEXEC, KILL, PS
 from neutron_bsdbridge.dhcp_agent import dnsmasq as dnsmasq_mod
-from neutron_bsdbridge.jail import JEXEC
 from neutron_bsdbridge.utils import default_run, write_if_changed
-
-KILL = "/bin/kill"
-PS = "/bin/ps"
 
 JAIL_RE = re.compile(r"^qdhcp-[0-9a-f]{12}$")
 

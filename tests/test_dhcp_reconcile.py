@@ -7,6 +7,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from neutron_bsdbridge import constants
 from neutron_bsdbridge.dhcp_agent import dnsmasq
 from neutron_bsdbridge.dhcp_agent import reconcile as dhcp_reconcile
 from tests import jail_fake
@@ -43,12 +44,12 @@ class FakeKernel(jail_fake.FakeKernel):
 
     def host(self, argv):
         prog = argv[0]
-        if prog == dhcp_reconcile.PS:
+        if prog == constants.PS:
             pid = argv[2]
             if self.dnsmasq_running and pid == DNSMASQ_PID:
                 return 0, "dnsmasq --conf-file=/dev/null ...\n", ""
             return 1, "", ""
-        if prog == dhcp_reconcile.KILL:
+        if prog == constants.KILL:
             if argv[1] == "-HUP":
                 return 0, "", ""
             self.dnsmasq_running = False

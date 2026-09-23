@@ -1,7 +1,6 @@
 """A stateful scripted kernel for the jail plane, shared by reconcile tests."""
 
-from neutron_bsdbridge import jail
-from neutron_bsdbridge.ifconfig import IFCONFIG
+from neutron_bsdbridge import constants
 
 
 def netmask(prefixlen):
@@ -35,7 +34,7 @@ class FakeKernel:
     def __call__(self, argv, timeout=None, input=None):
         self.calls.append(argv)
         prog = argv[0]
-        if prog == jail.JLS:
+        if prog == constants.JLS:
             if argv[1] == "name":
                 return 0, "".join(j + "\n" for j in self.jails), ""
             if argv[1] == "-j":
@@ -43,7 +42,7 @@ class FakeKernel:
                 if name in self.jails:
                     return 0, str(self.jails[name]) + "\n", ""
                 return 1, "", "no such jail"
-        if prog == jail.JAIL:
+        if prog == constants.JAIL:
             if argv[1] == "-c":
                 name = argv[2].split("=", 1)[1]
                 self._jid_seq += 1
@@ -52,17 +51,17 @@ class FakeKernel:
             if argv[1] == "-r":
                 self.jails.pop(argv[2], None)
                 return 0, "", ""
-        if prog == jail.PKILL:
+        if prog == constants.PKILL:
             return self.pkill(argv)
-        if prog == jail.JEXEC:
+        if prog == constants.JEXEC:
             name = argv[1]
             inner = argv[2:]
             if name not in self.jails:
                 return 1, "", "jail not found"
-            if inner[0] == IFCONFIG:
+            if inner[0] == constants.IFCONFIG:
                 return self._ifconfig(inner[1:], jail_name=name)
             return self.jexec(name, inner)
-        if prog == IFCONFIG:
+        if prog == constants.IFCONFIG:
             return self._ifconfig(argv[1:], jail_name=None)
         return self.host(argv)
 

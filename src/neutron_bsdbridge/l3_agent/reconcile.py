@@ -5,14 +5,9 @@ import re
 import shutil
 
 from neutron_bsdbridge import constants, jail
-from neutron_bsdbridge.constants import PFCTL
-from neutron_bsdbridge.jail import JEXEC
+from neutron_bsdbridge.constants import JEXEC, NETSTAT, PFCTL, ROUTE, SYSCTL
 from neutron_bsdbridge.l3_agent import router as router_mod
 from neutron_bsdbridge.utils import default_run, write_if_changed
-
-SYSCTL = "/sbin/sysctl"
-ROUTE = "/sbin/route"
-NETSTAT = "/usr/bin/netstat"
 
 FORWARDING = "net.inet.ip.forwarding"
 

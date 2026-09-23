@@ -1,13 +1,8 @@
 """VNET jail and epair plumbing shared by the dhcp and l3 reconcilers."""
 
 from neutron_bsdbridge import constants, ifconfig
-from neutron_bsdbridge.ifconfig import IFCONFIG
+from neutron_bsdbridge.constants import IFCONFIG, JAIL, JEXEC, JLS, PKILL
 from neutron_bsdbridge.utils import Receipt, default_run
-
-JLS = "/usr/sbin/jls"
-JAIL = "/usr/sbin/jail"
-JEXEC = "/usr/sbin/jexec"
-PKILL = "/bin/pkill"
 
 
 class Result:
