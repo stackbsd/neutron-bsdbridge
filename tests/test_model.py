@@ -8,7 +8,7 @@ from typing import ClassVar
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
-from neutron_bsdbridge import model
+from neutron_bsdbridge.l2_agent import model
 
 
 class CanonicalizationTestCase(unittest.TestCase):

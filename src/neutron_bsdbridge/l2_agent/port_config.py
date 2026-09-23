@@ -1,8 +1,9 @@
-"""Desired-state model from neutron RPC data."""
+"""Port config built from neutron RPC data."""
 
 from oslo_log import log as logging
 
-from neutron_bsdbridge import constants, model, names
+from neutron_bsdbridge import constants, names
+from neutron_bsdbridge.l2_agent import model
 
 LOG = logging.getLogger(__name__)
 

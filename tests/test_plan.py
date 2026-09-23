@@ -6,11 +6,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from neutron_bsdbridge import (
-    ifconfig,
-    model,
-    plan,
-)
+from neutron_bsdbridge import ifconfig
+from neutron_bsdbridge.l2_agent import model, plan
 
 
 def iface(name, groups=(), members=(), up=True, maxaddr=None, vlan=None, parent=None):

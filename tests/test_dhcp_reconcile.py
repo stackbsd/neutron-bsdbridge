@@ -7,7 +7,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from neutron_bsdbridge import dhcp_reconcile, dnsmasq
+from neutron_bsdbridge.dhcp_agent import dnsmasq
+from neutron_bsdbridge.dhcp_agent import reconcile as dhcp_reconcile
 
 NET = dnsmasq.DhcpNetwork(
     network_id="590dc57a-8b5e-4b94-b743-74e7d9a1b792",

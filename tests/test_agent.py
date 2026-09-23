@@ -10,11 +10,12 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 try:
-    from neutron_bsdbridge import agent as agent_mod
+    from neutron_bsdbridge.l2_agent import agent as agent_mod
 except ImportError:
     raise unittest.SkipTest("needs neutron libs; run under the neutron venv")
 
-from neutron_bsdbridge import ifconfig, writer  # noqa: E402
+from neutron_bsdbridge import ifconfig  # noqa: E402
+from neutron_bsdbridge.l2_agent import writer  # noqa: E402
 
 PORT_ID = "3fb01977-a4e2-4a28-9a6f-1f0a3a2b4c5d"
 
@@ -77,7 +78,7 @@ def make_agent(tmpdir, devices, writer_obj=None, reader=None):
         dry_run=True, run=lambda argv, **kw: (1, "", "")
     )
     a._reader = reader or (lambda names: ifconfig.KernelInterfaces({}, ()))
-    a._runner = lambda argv: None
+    a._run = lambda argv: (1, "", "")
     a._dirty = True
     a._failures = 0
     a._devices_up = set()
@@ -253,18 +254,19 @@ class DhcpIfDiscoveryTestCase(unittest.TestCase):
         # no port_update fanout for dhcp ports; the epair is the announcement
         a = make_agent(self.tmp.name, devices={PORT_ID})
 
-        def runner(argv):
+        def run(argv):
             if argv[-2:] == ("-g", "dhcp-neutron"):
-                return "dh3fb01977-a4e\n"
+                return 0, "dh3fb01977-a4e\n", ""
             if argv[-1] == "dh3fb01977-a4e":
-                return (
+                text = (
                     "dh3fb01977-a4e: flags=8843<UP> metric 0 mtu 1500\n"
                     "\tdescription: neutron port " + PORT_ID + "\n"
                     "\tgroups: epair dhcp-neutron\n"
                 )
-            return None
+                return 0, text, ""
+            return 1, "", ""
 
-        a._runner = runner
+        a._run = run
         a._sync()
         self.assertIn(PORT_ID, a._candidates)
 

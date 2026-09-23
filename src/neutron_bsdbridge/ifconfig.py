@@ -4,7 +4,7 @@ import dataclasses
 import re
 
 from neutron_bsdbridge.constants import OWNED_GROUP
-from neutron_bsdbridge.utils import default_runner
+from neutron_bsdbridge.utils import default_run
 
 IFCONFIG = "/sbin/ifconfig"
 HEADER_RE = re.compile(
@@ -180,28 +180,29 @@ def group_argv():
     return (IFCONFIG, "-g", OWNED_GROUP)
 
 
-def scan_group(group, runner=default_runner):
+def scan_group(group, run=default_run):
     """Return {name: Interface} for one interface group's members."""
-    names = parse_group_list(runner((IFCONFIG, "-g", group)) or "")
+    _rc, text, _err = run((IFCONFIG, "-g", group))
     out = {}
-    for name in names:
-        text = runner((IFCONFIG, name))
-        if text is not None:
+    for name in parse_group_list(text):
+        rc, text, _err = run((IFCONFIG, name))
+        if rc == 0:
             out.update(parse(text))
     return out
 
 
-def read_interfaces(names, runner=default_runner):
+def read_interfaces(names, run=default_run):
     """Read the owned interfaces plus the named ones."""
-    owned = parse_group_list(runner(group_argv()) or "")
+    _rc, text, _err = run(group_argv())
+    owned = parse_group_list(text)
     interfaces = {}
 
     def query(name):
         """Read and parse one interface, once."""
         if name in interfaces:
             return
-        text = runner((IFCONFIG, name))
-        if text is None:
+        rc, text, _err = run((IFCONFIG, name))
+        if rc != 0:
             return
         interfaces.update(parse(text))
 
@@ -216,6 +217,6 @@ def read_interfaces(names, runner=default_runner):
     addrs = {}
     for name, iface in interfaces.items():
         if iface.is_bridge:
-            text = runner((IFCONFIG, name, "addr"))
-            addrs[name] = parse_addr_list(text or "")
+            _rc, text, _err = run((IFCONFIG, name, "addr"))
+            addrs[name] = parse_addr_list(text)
     return KernelInterfaces(interfaces, owned, addrs)

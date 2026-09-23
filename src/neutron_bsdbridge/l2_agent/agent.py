@@ -24,10 +24,11 @@ from oslo_config import cfg
 from oslo_log import log as logging
 
 from neutron_bsdbridge import config as bsdbridge_config
-from neutron_bsdbridge import constants, desired, ifconfig, names
-from neutron_bsdbridge import reconcile as reconcile_mod
-from neutron_bsdbridge import writer as writer_mod
-from neutron_bsdbridge.utils import default_runner
+from neutron_bsdbridge import constants, ifconfig, names
+from neutron_bsdbridge.l2_agent import port_config
+from neutron_bsdbridge.l2_agent import reconcile as reconcile_mod
+from neutron_bsdbridge.l2_agent import writer as writer_mod
+from neutron_bsdbridge.utils import default_run
 
 LOG = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class BsdBridgeAgent:
     # need binding_activate at 1.5
     target = oslo_messaging.Target(version="1.5")
 
-    def __init__(self, conf, writer=None, reader=None, runner=None):
+    def __init__(self, conf, writer=None, reader=None, run=None):
         """Set up agent RPC and recover port candidates."""
         self.conf = conf
         self.host = conf.host
@@ -59,7 +60,7 @@ class BsdBridgeAgent:
         self.state_rpc = agent_rpc.PluginReportStateAPI(topics.REPORTS)
         self._writer = writer or writer_mod.Writer(dry_run=False)
         self._reader = reader
-        self._runner = runner or default_runner
+        self._run = run or default_run
         self._dirty = True
         self._failures = 0
         self._devices_up = set()
@@ -119,7 +120,7 @@ class BsdBridgeAgent:
     def _devices_from_dhcp_ifs(self):
         """Discover dhcp ports from the dhcp agent's epairs on this host."""
         # no port_update fanout announces a dhcp port; the epair is the announcement
-        scan = ifconfig.scan_group(constants.DHCP_GROUP, self._runner)
+        scan = ifconfig.scan_group(constants.DHCP_GROUP, self._run)
         return {
             iface.description[len(constants.DESCRIPTION_PREFIX) :]
             for iface in scan.values()
@@ -216,11 +217,11 @@ class BsdBridgeAgent:
             )
 
         # build and reconcile
-        config, rendered_devices = desired.build(
+        config, rendered_devices = port_config.build(
             details, sg_info, self.conf.bsdbridge.physical_interface_mappings
         )
         result = reconcile_mod.reconcile(
-            config, writer=self._writer, reader=self._reader, runner=self._runner
+            config, writer=self._writer, reader=self._reader, run=self._run
         )
         if result.plan.ops:
             LOG.info(

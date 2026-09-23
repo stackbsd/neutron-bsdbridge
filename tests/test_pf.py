@@ -7,7 +7,8 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
-from neutron_bsdbridge import ifconfig, model, pf, plan
+from neutron_bsdbridge import ifconfig
+from neutron_bsdbridge.l2_agent import model, pf, plan
 
 
 def make_filter(**sections):
@@ -108,17 +109,17 @@ class ReadbackTestCase(unittest.TestCase):
     def test_read_anchor_from_samples(self):
         """A loaded anchor reads back its hash and table members."""
 
-        def runner(argv):
+        def run(argv):
             """Serve the samples for the three readback queries."""
             if argv[-1] == "-sr":
-                return self._sample("pfctl-sr-anchor.txt")
+                return 0, self._sample("pfctl-sr-anchor.txt"), ""
             if argv[-1] == "-sT":
-                return self._sample("pfctl-sT-anchor.txt")
+                return 0, self._sample("pfctl-sT-anchor.txt"), ""
             if argv[-2:] == ("-T", "show"):
-                return self._sample("pfctl-T-show.txt")
+                return 0, self._sample("pfctl-T-show.txt"), ""
             raise AssertionError(argv)
 
-        state = pf.read_anchor("tapdeadbeef-00", runner)
+        state = pf.read_anchor("tapdeadbeef-00", run)
         self.assertTrue(state.exists)
         self.assertEqual("16ad57d372cb4efb", state.cfg_hash)
         self.assertEqual(
@@ -128,8 +129,8 @@ class ReadbackTestCase(unittest.TestCase):
     def test_read_anchor_absent(self):
         """A missing anchor reads back as exists=False."""
         # pfctl exits 0 and prints "Anchor does not exist" to stderr
-        self.assertFalse(pf.read_anchor("tapx", lambda argv: "").exists)
-        self.assertFalse(pf.read_anchor("tapx", lambda argv: None).exists)
+        self.assertFalse(pf.read_anchor("tapx", lambda argv: (0, "", "")).exists)
+        self.assertFalse(pf.read_anchor("tapx", lambda argv: (1, "", "")).exists)
 
 
 def iface(name, groups=(), members=(), maxaddr=None, vlan=None, parent=None):

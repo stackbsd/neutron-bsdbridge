@@ -9,9 +9,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from neutron_bsdbridge import (
-    ifconfig,
-)
+from neutron_bsdbridge import ifconfig
 
 SAMPLES = os.path.join(os.path.dirname(__file__), "samples")
 
@@ -137,10 +135,10 @@ class StructureTestCase(unittest.TestCase):
 
 
 class ReadInterfacesTestCase(unittest.TestCase):
-    """read_interfaces() against a fake runner serving the samples."""
+    """read_interfaces() against a fake run serving the samples."""
 
-    def _runner(self):
-        """Build a runner serving the samples plus its recorded call list."""
+    def _run(self):
+        """Build a run serving the samples plus its recorded call list."""
         by_iface = {
             "tapdeadbeef-00": sample("ifconfig-tap-member.txt"),
             "tapcafecafe-01": sample("ifconfig-tap-down.txt"),
@@ -155,17 +153,17 @@ class ReadInterfacesTestCase(unittest.TestCase):
             """Record the argv and serve the matching sample."""
             calls.append(argv)
             if argv == ifconfig.group_argv():
-                return sample("ifconfig-g-l2-neutron.txt")
-            return by_iface.get(argv[-1])
+                return 0, sample("ifconfig-g-l2-neutron.txt"), ""
+            if argv[-1] in by_iface:
+                return 0, by_iface[argv[-1]], ""
+            return 1, "", ""
 
         return run, calls
 
     def test_owned_plus_bridges_plus_members(self):
         """The kernel view covers the owned set, named bridges, and their members."""
-        run, _ = self._runner()
-        kernel = ifconfig.read_interfaces(
-            ["pbd2db231d54fe", "pb813cccc1f779"], runner=run
-        )
+        run, _ = self._run()
+        kernel = ifconfig.read_interfaces(["pbd2db231d54fe", "pb813cccc1f779"], run=run)
         self.assertEqual(
             {
                 "tapdeadbeef-00",
@@ -180,14 +178,14 @@ class ReadInterfacesTestCase(unittest.TestCase):
 
     def test_absent_bridge_is_absent_not_an_error(self):
         """A configured bridge the kernel does not have is simply absent."""
-        run, _ = self._runner()
-        kernel = ifconfig.read_interfaces(["pbffffffffffff"], runner=run)
+        run, _ = self._run()
+        kernel = ifconfig.read_interfaces(["pbffffffffffff"], run=run)
         self.assertNotIn("pbffffffffffff", kernel)
 
     def test_each_interface_queried_once(self):
         """Each interface is queried at most once."""
-        run, calls = self._runner()
-        ifconfig.read_interfaces(["pbd2db231d54fe", "pb813cccc1f779"], runner=run)
+        run, calls = self._run()
+        ifconfig.read_interfaces(["pbd2db231d54fe", "pb813cccc1f779"], run=run)
         detail = [
             argv[-1]
             for argv in calls
@@ -197,26 +195,26 @@ class ReadInterfacesTestCase(unittest.TestCase):
 
     def test_bridges_get_their_address_tables_read(self):
         """Each bridge gets its address table read."""
-        run, calls = self._runner()
-        kernel = ifconfig.read_interfaces(["pbd2db231d54fe"], runner=run)
+        run, calls = self._run()
+        kernel = ifconfig.read_interfaces(["pbd2db231d54fe"], run=run)
         addr_queries = [argv[1] for argv in calls if argv[-1] == "addr"]
         self.assertIn("pbd2db231d54fe", addr_queries)
         self.assertIn("pbd2db231d54fe", kernel.addrs)
 
     def test_foreign_member_is_queried(self):
         """A member that is neither owned nor configured still gets queried."""
-        run, _calls = self._runner()
+        run, _calls = self._run()
         text = sample("ifconfig-bridge-with-member.txt").replace(
             "member: tapcafecafe-01", "member: vtnet0"
         )
 
         def patched(argv):
-            """Serve the edited bridge block, otherwise defer to the runner."""
+            """Serve the edited bridge block, otherwise defer to the fake run."""
             if argv[-1] == "pbd2db231d54fe":
-                return text
+                return 0, text, ""
             return run(argv)
 
-        kernel = ifconfig.read_interfaces(["pbd2db231d54fe"], runner=patched)
+        kernel = ifconfig.read_interfaces(["pbd2db231d54fe"], run=patched)
         self.assertIn("vtnet0", kernel)
         self.assertFalse(kernel.interfaces["vtnet0"].is_owned)
 
