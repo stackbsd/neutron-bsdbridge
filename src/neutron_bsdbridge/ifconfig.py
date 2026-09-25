@@ -3,10 +3,9 @@
 import dataclasses
 import re
 
-from neutron_bsdbridge.constants import OWNED_GROUP
+from neutron_bsdbridge.constants import IFCONFIG, OWNED_GROUP
 from neutron_bsdbridge.utils import default_run
 
-IFCONFIG = "/sbin/ifconfig"
 HEADER_RE = re.compile(
     r"^(?P<name>[A-Za-z0-9_.:-]+): flags=[0-9a-fA-Fx]*<(?P<flags>[^>]*)>"
     r"(?: metric (?P<metric>\d+))?(?: mtu (?P<mtu>\d+))?"

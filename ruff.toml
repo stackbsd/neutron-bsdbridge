@@ -14,6 +14,7 @@ docstring-code-format = false
 # eventlet monkey-patches before any other import
 "src/neutron_bsdbridge/l2_agent/agent.py" = ["E402", "UP031"]
 "src/neutron_bsdbridge/dhcp_agent/agent.py" = ["E402", "UP031"]
+"src/neutron_bsdbridge/l3_agent/agent.py" = ["E402", "UP031"]
 "src/neutron_bsdbridge/mech.py" = ["UP031"]
 "src/neutron_bsdbridge/l2_agent/port_config.py" = ["UP031"]
 "tests/*" = ["D1", "E402", "B904", "RUF100", "RUF012"]

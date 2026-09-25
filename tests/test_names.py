@@ -49,6 +49,13 @@ class DhcpNamesTestCase(unittest.TestCase):
         self.assertEqual("dh3fb01977-a4e2", name)
         self.assertLessEqual(len(name), 15)
 
+    def test_router_if_name_fits_ifnamsiz_and_differs_from_dhcp(self):
+        port_id = "3fb01977-a4e2-4a28-9a6f-1f0a3a2b4c5d"
+        name = names.router_if_name(port_id)
+        self.assertEqual("rt3fb01977-a4e2", name)
+        self.assertLessEqual(len(name), 15)
+        self.assertNotEqual(name, names.dhcp_if_name(port_id))
+
     def test_jail_name_is_undashed_hex(self):
         self.assertEqual(
             "qdhcp-590dc57a8b5e",

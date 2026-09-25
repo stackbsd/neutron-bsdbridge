@@ -1,6 +1,6 @@
 # neutron-bsdbridge
 
-Neutron ML2 mechanism driver, L2 agent, and DHCP agent for FreeBSD based on `if_bridge(4)` and `pf(4)`.
+Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD based on `if_bridge(4)` and `pf(4)`.
 
 ## Status
 
@@ -11,10 +11,10 @@ Neutron ML2 mechanism driver, L2 agent, and DHCP agent for FreeBSD based on `if_
 - L2 agent to manage bridge, taps and security group rules
 - Port security
 - DHCP agent running one dnsmasq per network inside separate VNET jails
+- L3 agent running each router inside a VNET jail with SNAT and floating IPs
 
 ### Roadmap
 
-- L3 agent for gateway and NAT support
 - vxlan segments
 - IPv6 tcp and udp security group rules
 - metadata agent
@@ -24,6 +24,8 @@ Neutron ML2 mechanism driver, L2 agent, and DHCP agent for FreeBSD based on `if_
 - IPv6 tcp and udp rules are skipped and this traffic stays blocked
 - ARP is not inspected
 - Only IPv4 subnets are served by the DHCP agent
+- Only IPv4 subnets, routes and floating IPs are handled by the L3 agent
+- Distributed and HA routers are not supported
 
 ## Host requirements
 
@@ -38,6 +40,13 @@ anchor "l2-neutron/port/*"
 ```
 
 ## Configuration
+
+`neutron.conf`
+
+```ini
+[DEFAULT]
+service_plugins = router
+```
 
 `ml2_conf.ini`
 

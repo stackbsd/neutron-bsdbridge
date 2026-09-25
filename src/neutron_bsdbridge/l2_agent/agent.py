@@ -117,22 +117,23 @@ class BsdBridgeAgent:
                 out.append(iface.description[len(constants.DESCRIPTION_PREFIX) :])
         return out
 
-    def _devices_from_dhcp_ifs(self):
-        """Discover dhcp ports from the dhcp agent's epairs on this host."""
-        # no port_update fanout announces a dhcp port; the epair is the announcement
-        scan = ifconfig.scan_group(constants.DHCP_GROUP, self._run)
-        return {
-            iface.description[len(constants.DESCRIPTION_PREFIX) :]
-            for iface in scan.values()
-            if iface.description.startswith(constants.DESCRIPTION_PREFIX)
-        }
+    def _devices_from_service_ifs(self):
+        """Discover dhcp and router ports from the other agents' epairs."""
+        # no port_update fanout announces a service port; the epair is
+        # the announcement
+        found = set()
+        for group in constants.SERVICE_GROUPS:
+            for iface in ifconfig.scan_group(group, self._run).values():
+                if iface.description.startswith(constants.DESCRIPTION_PREFIX):
+                    found.add(iface.description[len(constants.DESCRIPTION_PREFIX) :])
+        return found
 
     def _recover_devices(self):
         """Return the cold-start candidates from the device file and the kernel."""
         return (
             set(self._devices_from_state())
             | set(self._devices_from_kernel())
-            | self._devices_from_dhcp_ifs()
+            | self._devices_from_service_ifs()
         )
 
     def port_update(self, context, **kwargs):
@@ -176,7 +177,7 @@ class BsdBridgeAgent:
 
     def _sync(self):
         """Fetch, build, reconcile, and report one pass."""
-        self._candidates |= self._devices_from_dhcp_ifs()
+        self._candidates |= self._devices_from_service_ifs()
         devices = sorted(self._candidates)
         details = []
         pending = set()
@@ -251,6 +252,7 @@ class BsdBridgeAgent:
             for device in rendered_devices
             if names.tap_name(device) not in waiting
             and names.dhcp_if_name(device) not in waiting
+            and names.router_if_name(device) not in waiting
         }
         for device in sorted(now_up - self._devices_up):
             LOG.info("%s reported up", device)

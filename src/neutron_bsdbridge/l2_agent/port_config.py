@@ -19,6 +19,13 @@ PROTO = {
 # infra allowances occupy 10-90
 SG_RULE_BASE = 100
 
+# service ports are epairs another agent manufactures, named by owner
+SERVICE_IF_NAME = {
+    constants.DEVICE_OWNER_DHCP: names.dhcp_if_name,
+    constants.DEVICE_OWNER_ROUTER_INTF: names.router_if_name,
+    constants.DEVICE_OWNER_ROUTER_GW: names.router_if_name,
+}
+
 
 def port_value(rule):
     """Return an SG rule's port as an int, a range string, or None."""
@@ -115,14 +122,12 @@ def build(ports, sg_info, interface_mappings):
     tables_used = set()
 
     for port in ports:
-        is_dhcp = (port.get("device_owner") or "").startswith(
-            constants.DEVICE_OWNER_DHCP
+        owner = port.get("device_owner") or ""
+        service_if = next(
+            (fn for prefix, fn in SERVICE_IF_NAME.items() if owner.startswith(prefix)),
+            None,
         )
-        tap = (
-            names.dhcp_if_name(port["port_id"])
-            if is_dhcp
-            else names.tap_name(port["port_id"])
-        )
+        tap = (service_if or names.tap_name)(port["port_id"])
         bridge = names.bridge_name(
             port.get("network_type"),
             port.get("physical_network"),
@@ -149,9 +154,9 @@ def build(ports, sg_info, interface_mappings):
                     segment["vlan"] = port["segmentation_id"]
                 stanza["segment"] = segment
 
-        # member: a dhcp epair is attached hardware with no policy
+        # member: a service epair is attached hardware with no policy
         member = {"description": constants.DESCRIPTION_PREFIX + port["port_id"]}
-        if is_dhcp:
+        if service_if is not None:
             pass
         elif port.get("port_security_enabled", True) is False:
             member["type"] = "tap"
