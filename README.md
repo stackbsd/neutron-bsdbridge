@@ -18,6 +18,7 @@ Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD base
 - vxlan segments
 - IPv6 tcp and udp security group rules
 - metadata agent
+- HA routers (CARP+pfsync)
 
 ### Limitations
 
@@ -25,7 +26,7 @@ Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD base
 - ARP is not inspected
 - Only IPv4 subnets are served by the DHCP agent
 - Only IPv4 subnets, routes and floating IPs are handled by the L3 agent
-- Distributed and HA routers are not supported
+- Distributed routers probably won't be supported
 
 ## Host requirements
 
