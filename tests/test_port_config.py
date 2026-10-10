@@ -98,6 +98,27 @@ class DesiredTestCase(unittest.TestCase):
         rules = list(self._filter().in_.values())
         self.assertIn("8000-8100", [r.port for r in rules])
 
+    def test_single_port_and_range_with_same_remote_sort(self):
+        sg_info = {
+            "devices": {
+                "3fb01977-a4e2-4a28-9a6f-1f0a3a2b4c5d": {"security_groups": ["sg"]}
+            },
+            "security_groups": {
+                "sg": [
+                    {
+                        "direction": "ingress",
+                        "ethertype": "IPv4",
+                        "protocol": "tcp",
+                        "port_range_min": lo,
+                        "port_range_max": hi,
+                    }
+                    for lo, hi in ((22, 22), (8000, 8100))
+                ]
+            },
+        }
+        in_rules, _ = port_config.sg_rules_for_port(port(), sg_info, set())
+        self.assertEqual([22, "8000-8100"], [r["port"] for r in in_rules.values()])
+
     def test_remote_group_becomes_a_table(self):
         rules = list(self._filter().in_.values())
         froms = [r.from_ for r in rules]
