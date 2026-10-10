@@ -92,7 +92,11 @@ def sg_rules_for_port(port, sg_info, tables_used):
 
     def numbered(bodies):
         """Assign rule numbers to bodies in a canonical order."""
-        ordered = sorted(bodies, key=lambda b: sorted(b.items()))
+        # port mixes int and range str so type ranks before value
+        ordered = sorted(
+            bodies,
+            key=lambda b: sorted((k, isinstance(v, str), v) for k, v in b.items()),
+        )
         return {str(SG_RULE_BASE + 10 * i): b for i, b in enumerate(ordered)}
 
     return numbered(rendered["in"]), numbered(rendered["out"])
