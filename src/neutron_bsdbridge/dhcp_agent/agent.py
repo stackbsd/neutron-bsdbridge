@@ -13,6 +13,7 @@ import time
 import oslo_messaging
 from neutron.agent import rpc as agent_rpc
 from neutron.common import config as common_config
+from neutron.conf import service as service_config
 from neutron.conf.agent import common as agent_common_config
 from neutron_lib import context as n_context
 from neutron_lib import rpc as n_rpc
@@ -366,6 +367,7 @@ class BsdBridgeDhcpAgent:
 def main():
     """Console entrypoint for the dhcp agent."""
     common_config.register_common_config_options()
+    service_config.register_service_opts(service_config.RPC_EXTRA_OPTS, cfg.CONF)
     agent_common_config.register_agent_state_opts_helper(cfg.CONF)
     agent_common_config.register_availability_zone_opts_helper(cfg.CONF)
     common_config.init(sys.argv[1:])
