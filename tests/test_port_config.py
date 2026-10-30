@@ -41,7 +41,7 @@ SG_INFO = {
                 "protocol": "tcp",
                 "port_range_min": 22,
                 "port_range_max": 22,
-                "remote_ip_prefix": "10.0.0.0/8",
+                "source_ip_prefix": "10.0.0.0/8",
             },
             {
                 "direction": "ingress",
@@ -53,6 +53,14 @@ SG_INFO = {
             },
             {"direction": "egress", "ethertype": "IPv4"},
             {"direction": "egress", "ethertype": "IPv6"},
+            {
+                "direction": "egress",
+                "ethertype": "IPv4",
+                "protocol": "udp",
+                "port_range_min": 53,
+                "port_range_max": 53,
+                "dest_ip_prefix": "192.0.2.0/24",
+            },
         ]
     },
     "sg_member_ips": {
@@ -133,6 +141,13 @@ class DesiredTestCase(unittest.TestCase):
         self.assertTrue(
             any(r.action == "pass" and r.proto is None and r.to == "any" for r in out)
         )
+
+    def test_egress_rule_renders_as_out_with_to(self):
+        out = list(self._filter().out.values())
+        dns = [r for r in out if r.port == 53]
+        self.assertEqual(1, len(dns))
+        self.assertEqual("192.0.2.0/24", dns[0].to)
+        self.assertEqual("any", dns[0].from_)
 
     def test_ipv6_tcp_is_skipped_fail_closed(self):
         info = {

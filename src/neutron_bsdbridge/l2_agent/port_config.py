@@ -16,6 +16,9 @@ PROTO = {
     "icmp6": "icmp6",
 }
 
+# the sg rpc renames remote_ip_prefix by direction
+PREFIX_KEY = {"ingress": "source_ip_prefix", "egress": "dest_ip_prefix"}
+
 # infra allowances occupy 10-90
 SG_RULE_BASE = 100
 
@@ -39,8 +42,9 @@ def port_value(rule):
 
 def remote(rule, tables_used):
     """Return an SG rule's remote as a CIDR, a table reference, or any."""
-    if rule.get("remote_ip_prefix"):
-        return str(rule["remote_ip_prefix"])
+    prefix = rule.get(PREFIX_KEY[rule["direction"]])
+    if prefix:
+        return str(prefix)
     if rule.get("remote_group_id"):
         tables_used.add(rule["remote_group_id"])
         return "@" + names.table_name(rule["remote_group_id"])
