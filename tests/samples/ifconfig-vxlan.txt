@@ -1,0 +1,9 @@
+vx1f5a50665c03: flags=1008943<UP,BROADCAST,RUNNING,PROMISC,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1450
+	description: segment realization: vxlan 5042
+	options=80020<JUMBO_MTU,LINKSTATE>
+	ether 58:9c:fc:10:c3:dd
+	groups: vxlan l2-neutron
+	vxlan vni 5042 local 10.0.0.114:4789 remote 127.0.0.1:61234
+	media: Ethernet autoselect (autoselect <full-duplex>)
+	status: active
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
