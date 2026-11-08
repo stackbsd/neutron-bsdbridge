@@ -66,7 +66,7 @@ def hosts_text(net):
 
 
 def opts_text(net):
-    """Render the dhcp-optsfile with per-subnet router and dns options."""
+    """Render the dhcp-optsfile with per-subnet options."""
     # an option with no value makes dnsmasq send nothing instead of itself
     lines = []
     for subnet in net.subnets:
@@ -83,6 +83,8 @@ def opts_text(net):
             lines.append(f"tag:{subnet.id},option:dns-server,{','.join(subnet.dns)}")
         else:
             lines.append(f"tag:{subnet.id},option:dns-server")
+        if net.mtu:
+            lines.append(f"tag:{subnet.id},option:mtu,{net.mtu}")
     return "".join(line + "\n" for line in lines)
 
 
