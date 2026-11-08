@@ -176,13 +176,15 @@ class RecoveryTestCase(unittest.TestCase):
             description="neutron port not-ours",
         )
         undescribed = ifconfig.Interface(
-            name="vx5042p0", flags=frozenset({"UP"}), groups=("vxlan", "l2-neutron")
+            name="vx1f5a50665c03",
+            flags=frozenset({"UP"}),
+            groups=("vxlan", "l2-neutron"),
         )
 
         def reader(names):
             return ifconfig.KernelInterfaces(
                 {i.name: i for i in (tap, foreign, undescribed)},
-                ("tap3fb01977-a4", "vx5042p0"),
+                ("tap3fb01977-a4", "vx1f5a50665c03"),
             )
 
         a = make_agent(self.tmp.name, devices=set(), reader=reader)

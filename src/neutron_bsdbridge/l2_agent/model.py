@@ -1,8 +1,11 @@
 """Desired-state model dataclasses."""
 
 import dataclasses
+import ipaddress
 import re
 from typing import ClassVar
+
+from neutron_bsdbridge.constants import VXLAN_PORT, VXLAN_TTL
 
 MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
 
@@ -174,17 +177,30 @@ class Physnet(Model):
 
 @dataclasses.dataclass
 class VxlanSegment(Model):
-    """A vxlan realization: VNI, local endpoint, and peer endpoints."""
+    """A unicast vxlan realization."""
 
     vni: int
     local: str
-    peers: list[str] = dataclasses.field(default_factory=list)
+    remote_port: int
+    port: int = VXLAN_PORT
+    ttl: int = VXLAN_TTL
+    mtu: int | None = None
 
     def __post_init__(self):
-        """Validate field shapes."""
+        """Validate field shapes and require an IPv4 local address."""
         check_int(self, "vni", ge=1, le=16777215)
         check_str(self, "local")
-        check_str_list(self, "peers")
+        check_int(self, "remote_port", ge=1, le=65535)
+        check_int(self, "port", ge=1, le=65535)
+        check_int(self, "ttl", ge=1, le=255)
+        if self.mtu is not None:
+            check_int(self, "mtu", ge=MTU_MIN)
+        try:
+            local = ipaddress.ip_address(self.local)
+        except ValueError as exc:
+            raise SchemaError(f"VxlanSegment.local: {exc}") from None
+        if local.version != 4:
+            raise SchemaError(f"VxlanSegment.local: {self.local!r} is not IPv4")
 
 
 @dataclasses.dataclass

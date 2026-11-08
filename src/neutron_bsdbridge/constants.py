@@ -18,6 +18,10 @@ L3_GROUP = "l3-neutron"
 SERVICE_GROUPS = (DHCP_GROUP, L3_GROUP)
 DHCP_JAIL_IF = "dhcp0"
 
+VXLAN_PORT = 4789
+VXLAN_TTL = 64
+SLOW_PATH_ADDR = "127.0.0.1"
+
 DESCRIPTION_PREFIX = "neutron port "
 DEVICE_OWNER_DHCP = "network:dhcp"
 DEVICE_OWNER_ROUTER_INTF = "network:router_interface"

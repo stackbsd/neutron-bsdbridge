@@ -55,6 +55,55 @@ class ArgvTestCase(unittest.TestCase):
             argv,
         )
 
+    def test_create_vxlan_renders_every_keyword_in_order(self):
+        """CreateVxlan creates the interface in one call."""
+        argv = writer.argv_for(
+            plan.CreateVxlan(
+                name="vx1f5a50665c03",
+                vni=5042,
+                local="10.255.0.11",
+                port=4789,
+                remote_port=61234,
+                ttl=64,
+                mtu=1450,
+            )
+        )
+        self.assertEqual(
+            (
+                "/sbin/ifconfig",
+                "vxlan",
+                "create",
+                "vxlanid",
+                "5042",
+                "vxlanlocal",
+                "10.255.0.11",
+                "vxlanremote",
+                "127.0.0.1",
+                "vxlanlocalport",
+                "4789",
+                "vxlanremoteport",
+                "61234",
+                "vxlanttl",
+                "64",
+                "-vxlanlearn",
+                "mtu",
+                "1450",
+                "name",
+                "vx1f5a50665c03",
+                "descr",
+                "segment realization: vxlan 5042",
+                "group",
+                "l2-neutron",
+                "up",
+            ),
+            argv,
+        )
+
+    def test_clear_discover_renders_the_member_flag(self):
+        """ClearDiscover clears discover on one member."""
+        argv = writer.argv_for(plan.ClearDiscover(bridge="net42", member="vx0"))
+        self.assertEqual(("/sbin/ifconfig", "net42", "-discover", "vx0"), argv)
+
     def test_create_tap_without_description_omits_descr(self):
         """CreateTap leaves descr out of the argv when the description is empty."""
         argv = writer.argv_for(plan.CreateTap(name="tapx", description=""))

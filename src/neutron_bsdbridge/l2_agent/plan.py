@@ -2,9 +2,9 @@
 
 import dataclasses
 
+from neutron_bsdbridge import names as names_mod
+from neutron_bsdbridge.constants import SLOW_PATH_ADDR
 from neutron_bsdbridge.l2_agent import model, pf
-
-VXLAN_UPLINK = "vx{vni}p{idx}"
 
 
 class PlanError(Exception):
@@ -42,12 +42,15 @@ class CreateVlan(Op):
 
 @dataclasses.dataclass(frozen=True)
 class CreateVxlan(Op):
-    """Create one point-to-point vxlan interface toward a peer."""
+    """Create a unicast vxlan interface for one VNI."""
 
     name: str
     vni: int
     local: str
-    peer: str
+    port: int
+    remote_port: int
+    ttl: int
+    mtu: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -104,6 +107,14 @@ class LockMemberMac(Op):
 @dataclasses.dataclass(frozen=True)
 class AddMember(Op):
     """Add an interface to a bridge."""
+
+    bridge: str
+    member: str
+
+
+@dataclasses.dataclass(frozen=True)
+class ClearDiscover(Op):
+    """Stop a bridge flooding unknown unicast to a member."""
 
     bridge: str
     member: str
@@ -167,10 +178,7 @@ def uplink_names(bridge_name, bridge, config):
     if seg is None:
         return []
     if seg.vxlan is not None:
-        return [
-            VXLAN_UPLINK.format(vni=seg.vxlan.vni, idx=i)
-            for i in range(len(seg.vxlan.peers))
-        ]
+        return [names_mod.vxlan_if_name(seg.vxlan.vni)]
     trunk = config.physnet[seg.physnet].trunk
     if seg.vlan is not None:
         name = f"{trunk}.{seg.vlan}"
@@ -183,17 +191,43 @@ def uplink_names(bridge_name, bridge, config):
     return [trunk]
 
 
-def uplink_creates(bridge, seg, names, kernel):
-    """Return ops to manufacture a segment's missing uplinks."""
+def uplink_creates(bname, seg, names, kernel):
+    """Return ops to manufacture a segment's missing or drifted uplinks."""
     ops = []
     if seg.vxlan is not None:
-        for name, peer in zip(names, seg.vxlan.peers, strict=False):
-            if name not in kernel:
-                ops.append(
-                    CreateVxlan(
-                        name=name, vni=seg.vxlan.vni, local=seg.vxlan.local, peer=peer
-                    )
+        vx = seg.vxlan
+        name = names[0]
+        iface = kernel.interfaces.get(name)
+        if iface is not None:
+            if not iface.is_owned:
+                raise PlanError(
+                    f"desired vxlan {name} exists without the l2-neutron group. "
+                    "Remove or rename it by hand."
                 )
+            drifted = (
+                iface.vni != vx.vni
+                or iface.vxlan_local != vx.local
+                or iface.vxlan_remote != SLOW_PATH_ADDR
+                or iface.vxlan_port != vx.port
+                or iface.vxlan_remote_port != vx.remote_port
+            )
+            if not drifted:
+                return ops
+            # the kernel refuses to change vni or addresses on a live interface
+            if name in kernel.members_of(bname):
+                ops.append(RemoveMember(bridge=bname, member=name))
+            ops.append(DestroyIface(name=name))
+        ops.append(
+            CreateVxlan(
+                name=name,
+                vni=vx.vni,
+                local=vx.local,
+                port=vx.port,
+                remote_port=vx.remote_port,
+                ttl=vx.ttl,
+                mtu=vx.mtu,
+            )
+        )
     elif seg.vlan is not None:
         name = names[0]
         if name not in kernel:
@@ -257,10 +291,21 @@ def diff(config, kernel, pf_state=None):
             plan.creates.append(CreateBridge(name=bname, maxaddr=bridge.max_addresses))
         elif iface.maxaddr is not None and iface.maxaddr != bridge.max_addresses:
             plan.creates.append(SetMaxaddr(bridge=bname, maxaddr=bridge.max_addresses))
-        if seg is not None:
-            plan.creates.extend(uplink_creates(bridge, seg, names, kernel))
+        uplink_ops = uplink_creates(bname, seg, names, kernel) if seg else []
+        plan.creates.extend(uplink_ops)
+        # never recreate on mtu as the bridge forces members to its own mtu
+        if seg and seg.vxlan and seg.vxlan.mtu and not uplink_ops:
+            vx_mtu = kernel.interfaces[names[0]].mtu
+            if vx_mtu != seg.vxlan.mtu:
+                plan.notes.append(
+                    f"{names[0]}: mtu {vx_mtu} is not the network mtu "
+                    f"{seg.vxlan.mtu} ({bname})"
+                )
 
-        current = set(kernel.members_of(bname))
+        # a recreated uplink must be added again
+        current = set(kernel.members_of(bname)) - {
+            op.name for op in uplink_ops if isinstance(op, CreateVxlan)
+        }
         wanted = list(names)
 
         for mname, member in bridge.member.items():
@@ -326,6 +371,11 @@ def diff(config, kernel, pf_state=None):
                 plan.adds.append(AddMember(bridge=bname, member=name))
             else:
                 plan.notes.append(f"{name}: awaiting-attach ({bname})")
+        # unknown unicast must not reach the slow path through the uplink
+        if seg is not None and seg.vxlan is not None:
+            name = names[0]
+            if name not in current or "DISCOVER" in kernel.member_flags(bname, name):
+                plan.adds.append(ClearDiscover(bridge=bname, member=name))
 
         # foreign members are removed (don't destroy)
         for member in current:

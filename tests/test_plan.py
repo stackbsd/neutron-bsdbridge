@@ -6,11 +6,13 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from neutron_bsdbridge import ifconfig
+from neutron_bsdbridge import ifconfig, names
 from neutron_bsdbridge.l2_agent import model, plan
 
 
-def iface(name, groups=(), members=(), up=True, maxaddr=None, vlan=None, parent=None):
+def iface(
+    name, groups=(), members=(), up=True, maxaddr=None, vlan=None, parent=None, **kw
+):
     """Build an Interface fixture."""
     return ifconfig.Interface(
         name=name,
@@ -20,6 +22,7 @@ def iface(name, groups=(), members=(), up=True, maxaddr=None, vlan=None, parent=
         maxaddr=maxaddr,
         vlan=vlan,
         vlan_parent=parent,
+        **kw,
     )
 
 
@@ -135,32 +138,133 @@ class CreateTestCase(unittest.TestCase):
         self.assertEqual([plan.CreateBridge(name="flatnet", maxaddr=2000)], p.creates)
         self.assertEqual([plan.AddMember(bridge="flatnet", member="vtnet0")], p.adds)
 
-    def test_vxlan_segment_creates_one_uplink_per_peer(self):
-        """A vxlan segment plans one derived uplink per peer, in order."""
-        tree = {
-            "net42": {
-                "segment": {
-                    "vxlan": {
-                        "vni": 5042,
-                        "local": "10.255.0.11",
-                        "peers": ["10.255.0.12", "10.255.0.13"],
-                    }
-                }
-            }
-        }
-        p = plan.diff(cfg(bridge=tree), kernel())
-        uplinks = [o for o in p.creates if isinstance(o, plan.CreateVxlan)]
-        self.assertEqual(
-            [("vx5042p0", "10.255.0.12"), ("vx5042p1", "10.255.0.13")],
-            [(o.name, o.peer) for o in uplinks],
-        )
-
     def test_maxaddr_drift_is_a_set_not_a_recreate(self):
         """Drifted maxaddr plans a SetMaxaddr, never a recreate."""
         o = reconciled_blue()
         tree = {"blue": dict(BLUE["blue"], **{"max-addresses": 500})}
         p = plan.diff(cfg(bridge=tree), o)
         self.assertEqual([plan.SetMaxaddr(bridge="blue", maxaddr=500)], p.creates)
+
+
+VX = names.vxlan_if_name(5042)
+VXLAN = {
+    "net42": {
+        "segment": {
+            "vxlan": {
+                "vni": 5042,
+                "local": "10.255.0.11",
+                "remote_port": 61234,
+                "mtu": 1450,
+            }
+        },
+        "member": {"tap00000000-01": {"type": "tap", "mtu": 1450}},
+    }
+}
+
+
+def vxlan_kernel(discover=frozenset(), **drift):
+    """Build the VXLAN kernel state with the given drift."""
+    fields = {
+        "vni": 5042,
+        "vxlan_local": "10.255.0.11",
+        "vxlan_remote": "127.0.0.1",
+        "vxlan_port": 4789,
+        "vxlan_remote_port": 61234,
+        "mtu": 1450,
+    }
+    fields.update(drift)
+    return kernel(
+        iface(
+            "net42",
+            groups=("bridge", "l2-neutron"),
+            members=("tap00000000-01", VX),
+            maxaddr=2000,
+            member_flags=(
+                ("tap00000000-01", frozenset({"LEARNING", "DISCOVER"})),
+                (VX, frozenset({"LEARNING"}) | discover),
+            ),
+        ),
+        iface(VX, groups=("vxlan", "l2-neutron"), **fields),
+        iface("tap00000000-01", groups=("tap", "l2-neutron")),
+    )
+
+
+class VxlanTestCase(unittest.TestCase):
+    """Unicast vxlan uplinks."""
+
+    def test_one_vxlan_under_the_hashed_name(self):
+        """A vxlan segment creates one interface and members it."""
+        p = plan.diff(cfg(bridge=VXLAN), kernel())
+        self.assertEqual(
+            [
+                plan.CreateBridge(name="net42", maxaddr=2000),
+                plan.CreateVxlan(
+                    name=VX,
+                    vni=5042,
+                    local="10.255.0.11",
+                    port=4789,
+                    remote_port=61234,
+                    ttl=64,
+                    mtu=1450,
+                ),
+            ],
+            p.creates,
+        )
+        self.assertEqual(
+            [
+                plan.AddMember(bridge="net42", member=VX),
+                plan.ClearDiscover(bridge="net42", member=VX),
+            ],
+            p.adds[-2:],
+        )
+
+    def test_reconciled_vxlan_plans_to_nothing(self):
+        """A matching vxlan plans to nothing."""
+        p = plan.diff(cfg(bridge=VXLAN), vxlan_kernel())
+        self.assertTrue(p.empty, [str(o) for o in p.ops])
+
+    def test_drift_recreates_the_interface(self):
+        """Drift on vni, local, remote or either port plans a recreate."""
+        for drift in (
+            {"vni": 5043},
+            {"vxlan_local": "10.255.0.12"},
+            {"vxlan_remote": "239.1.19.178"},
+            {"vxlan_port": 8472},
+            {"vxlan_remote_port": 61235},
+        ):
+            p = plan.diff(cfg(bridge=VXLAN), vxlan_kernel(**drift))
+            self.assertEqual(
+                [plan.RemoveMember, plan.DestroyIface, plan.CreateVxlan],
+                [type(o) for o in p.creates],
+                drift,
+            )
+            self.assertEqual(VX, p.creates[1].name)
+            self.assertEqual(
+                [
+                    plan.AddMember(bridge="net42", member=VX),
+                    plan.ClearDiscover(bridge="net42", member=VX),
+                ],
+                p.adds,
+            )
+            self.assertEqual([], p.destroys)
+
+    def test_discover_left_on_the_vxlan_member_is_cleared(self):
+        """A vxlan member flooding unknown unicast gets the flag cleared."""
+        p = plan.diff(cfg(bridge=VXLAN), vxlan_kernel(discover={"DISCOVER"}))
+        self.assertEqual([plan.ClearDiscover(bridge="net42", member=VX)], p.ops)
+
+    def test_mtu_drift_is_a_note_not_a_recreate(self):
+        """An mtu the bridge forced on the vxlan is noted, never recreated."""
+        p = plan.diff(cfg(bridge=VXLAN), vxlan_kernel(mtu=1500))
+        self.assertTrue(p.empty, [str(o) for o in p.ops])
+        self.assertEqual(
+            [f"{VX}: mtu 1500 is not the network mtu 1450 (net42)"], p.notes
+        )
+
+    def test_unowned_vxlan_under_the_derived_name_is_an_error(self):
+        """A vxlan under the derived name without the group is a PlanError."""
+        o = kernel(iface(VX, groups=("vxlan",), vni=5042))
+        self.assertRaises(plan.PlanError, plan.diff, cfg(bridge=VXLAN), o)
 
 
 class OwnershipTestCase(unittest.TestCase):
