@@ -9,7 +9,7 @@ DHCP_AGENT_BINARY = "neutron-bsdbridge-dhcp-agent"
 AGENT_TYPE_L3 = "L3 agent"
 L3_AGENT_BINARY = "neutron-bsdbridge-l3-agent"
 
-SUPPORTED_NETWORK_TYPES = ("local", "flat", "vlan")
+SUPPORTED_NETWORK_TYPES = ("local", "flat", "vlan", "vxlan")
 
 # the kernel refuses group names ending in a digit
 OWNED_GROUP = "l2-neutron"

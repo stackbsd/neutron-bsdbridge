@@ -23,11 +23,11 @@ def segment(network_type="local", physnet=None, seg_id=None):
     }
 
 
-def agent(mappings=None):
-    return {
-        "configurations": {"physical_interface_mappings": mappings or {}},
-        "alive": True,
-    }
+def agent(mappings=None, tunnel_types=None):
+    configurations = {"physical_interface_mappings": mappings or {}}
+    if tunnel_types is not None:
+        configurations["tunnel_types"] = tunnel_types
+    return {"configurations": configurations, "alive": True}
 
 
 class FakeContext:
@@ -49,9 +49,21 @@ class MechTestCase(unittest.TestCase):
             self.driver.check_segment_for_agent(seg, agent({"physnet1": "ix0"}))
         )
 
+    def test_vxlan_needs_the_agent_to_advertise_it(self):
+        seg = segment("vxlan", seg_id=5042)
+        self.assertFalse(self.driver.check_segment_for_agent(seg, agent()))
+        self.assertFalse(
+            self.driver.check_segment_for_agent(seg, agent(tunnel_types=[]))
+        )
+        self.assertTrue(
+            self.driver.check_segment_for_agent(seg, agent(tunnel_types=["vxlan"]))
+        )
+
     def test_unsupported_type_refused(self):
         self.assertFalse(
-            self.driver.check_segment_for_agent(segment("vxlan", seg_id=5042), agent())
+            self.driver.check_segment_for_agent(
+                segment("geneve", seg_id=5042), agent(tunnel_types=["vxlan"])
+            )
         )
 
     def test_vif_details_carry_the_computed_bridge(self):
