@@ -37,6 +37,7 @@ class Port:
     prefixes: tuple = ()
     scope4: str | None = None
     scope6: str | None = None
+    mtu: int | None = None
 
     @property
     def host_if(self):
@@ -120,6 +121,7 @@ def port_from_rpc(port):
         prefixes=prefixes,
         scope4=scopes.get("4"),
         scope6=scopes.get("6"),
+        mtu=port.get("mtu") or None,
     )
 
 

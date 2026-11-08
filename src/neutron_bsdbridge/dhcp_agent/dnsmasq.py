@@ -37,6 +37,7 @@ class DhcpNetwork:
     ips: tuple
     subnets: tuple
     hosts: tuple
+    mtu: int | None = None
 
     @property
     def jail(self):

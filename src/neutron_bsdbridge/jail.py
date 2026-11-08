@@ -89,7 +89,7 @@ def ensure_jail(acts, name, jails):
     return True
 
 
-def ensure_epair(acts, jail, host_if, jail_if, port_id, group, host_ifs):
+def ensure_epair(acts, jail, host_if, jail_if, port_id, group, host_ifs, mtu=None):
     """Ensure one epair spans the host and a jail, returning the jail end's text."""
     rc, host_if_text, _err = acts.run((IFCONFIG, host_if))
     have_host = rc == 0
@@ -116,6 +116,8 @@ def ensure_epair(acts, jail, host_if, jail_if, port_id, group, host_ifs):
             return None
         a_end = out.strip()
         b_end = a_end[:-1] + "b"
+        # the first member sets the bridge mtu and later ones are forced to it
+        mtu_args = ("mtu", str(mtu)) if mtu else ()
         acts.do(
             "NameHostIf",
             (
@@ -125,6 +127,7 @@ def ensure_epair(acts, jail, host_if, jail_if, port_id, group, host_ifs):
                 host_if,
                 "descr",
                 constants.DESCRIPTION_PREFIX + port_id,
+                *mtu_args,
                 "group",
                 group,
                 "up",
@@ -132,7 +135,9 @@ def ensure_epair(acts, jail, host_if, jail_if, port_id, group, host_ifs):
         )
         host_ifs.add(host_if)
         acts.do("MoveJailIf", (IFCONFIG, b_end, "vnet", jail))
-        acts.do("NameJailIf", (JEXEC, jail, IFCONFIG, b_end, "name", jail_if))
+        acts.do(
+            "NameJailIf", (JEXEC, jail, IFCONFIG, b_end, "name", jail_if, *mtu_args)
+        )
         rc, jail_if_text, _err = acts.run((JEXEC, jail, IFCONFIG, jail_if))
         have_jail = rc == 0
     return jail_if_text if have_jail else None

@@ -96,6 +96,7 @@ def reconcile(desired, base, run=default_run):
                 port.id,
                 constants.L3_GROUP,
                 l3_ifs,
+                port.mtu,
             )
             if text is None:
                 complete = False

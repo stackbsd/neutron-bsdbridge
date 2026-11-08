@@ -271,6 +271,7 @@ class BsdBridgeDhcpAgent:
             ips=tuple(ips),
             subnets=subnets,
             hosts=tuple(sorted(hosts, key=lambda h: (h.ip, h.mac))),
+            mtu=net.get("mtu") or None,
         )
 
     def _sync(self):

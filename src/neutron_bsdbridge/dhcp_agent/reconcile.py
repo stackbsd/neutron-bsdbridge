@@ -44,6 +44,7 @@ def reconcile(desired, base, run=default_run, dnsmasq_path=constants.DNSMASQ):
             net.port_id,
             constants.DHCP_GROUP,
             dhcp_ifs,
+            net.mtu,
         )
         if jail_if_text is None:
             continue

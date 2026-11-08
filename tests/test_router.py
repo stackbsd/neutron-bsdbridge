@@ -83,6 +83,13 @@ class FromRpcTestCase(unittest.TestCase):
         self.assertEqual((("192.168.7.0/24", "10.0.0.7"),), r.routes)
         self.assertTrue(r.enable_snat)
 
+    def test_port_mtu_is_carried_and_zero_means_unknown(self):
+        r = router.from_rpc(
+            rpc_router(gw_port=gw_port(mtu=0), _interfaces=[int_port(mtu=1450)])
+        )
+        self.assertIsNone(r.gateway.mtu)
+        self.assertEqual(1450, r.interfaces[0].mtu)
+
     def test_router_without_gateway(self):
         r = router.from_rpc(rpc_router(gw_port=None, _floatingips=[]))
         self.assertIsNone(r.gateway)

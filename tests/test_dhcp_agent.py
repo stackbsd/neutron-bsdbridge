@@ -166,6 +166,12 @@ class SyncTestCase(unittest.TestCase):
         self.assertEqual(1, len(spec.hosts))
         self.assertEqual("10.99.0.5", spec.hosts[0].ip)
 
+    def test_network_mtu_reaches_the_spec(self):
+        a = make_agent([network(ports=[dhcp_port(), vm_port()], mtu=1450)])
+        a._sync()
+        (desired,) = a._reconcile.calls
+        self.assertEqual(1450, desired[0].mtu)
+
     def test_existing_port_is_reused_untouched(self):
         a = make_agent([network(ports=[dhcp_port(), vm_port()])])
         a._sync()
