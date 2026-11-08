@@ -26,7 +26,7 @@ class Prefix:
 
 @dataclasses.dataclass(frozen=True)
 class Port:
-    """One router port: its addresses and the subnets behind it."""
+    """One router port."""
 
     id: str
     mac: str
@@ -86,7 +86,7 @@ def state_dir(base, router_id):
 
 
 def port_from_rpc(port):
-    """Build a Port from a router port dict, or None without an address."""
+    """Build a Port from a router port dict."""
     subnets = {s["id"]: s for s in port.get("subnets", [])}
     ips = []
     gateways = {}

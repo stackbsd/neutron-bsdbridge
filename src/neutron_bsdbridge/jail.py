@@ -8,7 +8,7 @@ from neutron_bsdbridge.utils import Receipt, default_run
 
 
 class Result:
-    """One reconcile pass: its receipts."""
+    """Receipts of one reconcile pass."""
 
     def __init__(self, receipts):
         """Hold the pass's receipts."""
@@ -182,7 +182,7 @@ def ensure_addrs(acts, jail, jail_if, jail_if_text, mac, ips):
 
 
 def collect(acts, jails, desired_jails, host_ifs, desired_ifs):
-    """Tear down undesired jails: processes, then epairs, then the jails."""
+    """Tear down undesired jails with their processes and epairs."""
     for jail in sorted(jails - desired_jails):
         rc, out, _err = acts.run((JLS, "-j", jail, "jid"))
         if rc == 0 and (out or "").strip():

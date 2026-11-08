@@ -21,7 +21,7 @@ def names_to_check(config):
 
 @dataclasses.dataclass
 class Result:
-    """One reconcile pass: the plan, its receipts, and the kernel it saw."""
+    """One reconcile pass with its plan, receipts and kernel view."""
 
     plan: object
     receipts: list

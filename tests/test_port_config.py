@@ -1,4 +1,4 @@
-"""Desired-state builder fixtures: neutron RPC shapes in, the model out."""
+"""Port config builder tests."""
 
 import os
 import sys

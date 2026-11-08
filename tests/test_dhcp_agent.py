@@ -1,4 +1,4 @@
-"""dhcp agent tests: port reconciliation, spec building, readiness."""
+"""dhcp agent tests."""
 
 import os
 import sys

@@ -130,7 +130,7 @@ class ReconcileTestCase(unittest.TestCase):
         self.assertNotIn("mtu", self.kernel.host_ifaces[NET.dhcp_if])
 
     def test_second_reconcile_does_nothing(self):
-        """The contract: reconcile twice, the second pass is empty."""
+        """A second reconcile does nothing."""
         self._reconcile([NET])
         again = self._reconcile([NET])
         self.assertEqual([], [str(r) for r in again.receipts])
@@ -217,7 +217,7 @@ class ReconcileTestCase(unittest.TestCase):
 
 
 class EpairDescriptionTestCase(unittest.TestCase):
-    """The epair description is the L2 discovery channel: healed on drift."""
+    """The epair description the L2 agent discovers ports by."""
 
     def setUp(self):
         """Fresh kernel and state dir."""

@@ -76,7 +76,7 @@ class KernelInterfaces:
         self.addrs = addrs or {}
 
     def static_lock(self, bridge, member):
-        """Return the statically locked MAC for a member, or None."""
+        """Return the statically locked MAC for a member."""
         for mac, mem, static in self.addrs.get(bridge, []):
             if mem == member and static:
                 return mac
@@ -94,7 +94,7 @@ class KernelInterfaces:
         return {n: i for n, i in self.interfaces.items() if i.is_bridge}
 
     def members_of(self, bridge):
-        """Return a bridge's member names, or () when it is absent."""
+        """Return a bridge's member names."""
         iface = self.interfaces.get(bridge)
         return iface.members if iface else ()
 
@@ -260,7 +260,7 @@ def read_interfaces(names, run=default_run):
         query(name)
     for name in names:
         query(name)
-    # foreign members too: the differ needs them present to remove them
+    # read foreign members too as the differ needs them to remove them
     for bridge in list(interfaces.values()):
         for member in bridge.members:
             query(member)

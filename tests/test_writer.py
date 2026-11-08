@@ -1,4 +1,4 @@
-"""Writer tests: argv emission, the destroy guard, and parking."""
+"""Writer tests."""
 
 import os
 import sys
@@ -187,7 +187,7 @@ class ArgvTestCase(unittest.TestCase):
 
 
 class FakeRunner:
-    """Scripted kernel: records argv, serves canned responses."""
+    """Scripted kernel that records argv and serves canned responses."""
 
     def __init__(self, iface_text=None, fail=(), hang=()):
         """Configure canned interface text and the failing or hanging targets."""

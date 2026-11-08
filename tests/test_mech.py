@@ -1,4 +1,4 @@
-"""Mech driver tests: agent-gated binding, per-segment vif details."""
+"""Mech driver tests."""
 
 import os
 import sys

@@ -1,4 +1,4 @@
-"""Router spec tests: RPC dicts in, addresses, routes and pf text out."""
+"""Router spec tests."""
 
 import dataclasses
 import os

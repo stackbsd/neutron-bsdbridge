@@ -1,4 +1,4 @@
-"""dnsmasq rendering tests: the address plan in, files and argv out."""
+"""dnsmasq rendering tests."""
 
 import dataclasses
 import os
@@ -134,7 +134,7 @@ class ArgvTestCase(unittest.TestCase):
     """The dnsmasq invocation."""
 
     def test_static_range_per_subnet(self):
-        """Each subnet renders a tagged static range: serve, never invent."""
+        """Each subnet renders a tagged static range."""
         argv = dnsmasq.argv(NET, "/var/db/x")
         self.assertIn(
             "--dhcp-range=set:daa048b5-450c-4c4b-97a6-c5f5542289c4,"

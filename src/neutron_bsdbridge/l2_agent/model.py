@@ -112,7 +112,7 @@ def check_model_map(obj, name, model_cls):
 
 
 class Model:
-    """Base for every model: tree construction with unknown keys refused."""
+    """Base for every model built from a tree."""
 
     # tree key -> field name, for keys that are not identifiers
     _aliases: ClassVar[dict] = {}
@@ -164,7 +164,7 @@ class Model:
 
 @dataclasses.dataclass
 class Physnet(Model):
-    """A physical fabric: its trunk parent interface."""
+    """A physical fabric and its trunk interface."""
 
     trunk: str
     description: str = ""
@@ -205,7 +205,7 @@ class VxlanSegment(Model):
 
 @dataclasses.dataclass
 class Segment(Model):
-    """A bridge's segment realization: vlan, flat, or vxlan."""
+    """A bridge's segment realization."""
 
     _nested: ClassVar[dict] = {"vxlan": VxlanSegment}
 
@@ -232,7 +232,7 @@ class Segment(Model):
 
 @dataclasses.dataclass
 class Bind(Model):
-    """Port security for one member: the locked MAC and addresses."""
+    """Port security binding for one member."""
 
     mac: str
     address: str | None = None
@@ -273,7 +273,7 @@ class Member(Model):
 
 @dataclasses.dataclass
 class Bridge(Model):
-    """One bridge: segment realization plus its members."""
+    """One bridge with its segment and members."""
 
     _aliases: ClassVar[dict] = {"max-addresses": "max_addresses"}
     _nested: ClassVar[dict] = {"segment": Segment}
@@ -349,7 +349,7 @@ def int_rules(rules):
 
 @dataclasses.dataclass
 class Filter(Model):
-    """A named filter: numbered in and out rules, in the workload's view."""
+    """A named filter of numbered in and out rules."""
 
     _aliases: ClassVar[dict] = {"in": "in_"}
     _nested_map: ClassVar[dict] = {"in_": FilterRule, "out": FilterRule}

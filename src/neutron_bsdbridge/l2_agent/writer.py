@@ -115,7 +115,7 @@ class Writer:
         self._run = run
 
     def _owned_by_kernel(self, name):
-        """Return whether the kernel marks an interface owned, or None if absent."""
+        """Return whether the kernel marks an interface owned."""
         rc, out, _err = self._run((IFCONFIG, name))
         if rc != 0:
             return None

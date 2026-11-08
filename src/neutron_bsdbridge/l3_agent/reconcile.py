@@ -103,7 +103,7 @@ def reconcile(desired, base, run=default_run):
                 continue
             jail.ensure_addrs(acts, rtr.jail, jail_if, text, port.mac, addrs[jail_if])
 
-        # routes: a route needs its interface, so only once every port exists
+        # add routes once every port exists as a route needs its interface
         if complete:
             have = set()
             for family in FAMILIES:
@@ -147,7 +147,7 @@ def reconcile(desired, base, run=default_run):
                     acts.do("StopRtadvd", (KILL, str(pid)))
                 os.unlink(stem + ".conf")
 
-        # pf: enable once, load on a changed hash
+        # enable pf once and load it on a changed hash
         text, cfg_hash = router_mod.pf_text(rtr)
         path = os.path.join(directory, "pf.conf")
         if write_if_changed(path, text):
@@ -160,7 +160,7 @@ def reconcile(desired, base, run=default_run):
         if m is None or m.group("hash") != cfg_hash:
             acts.do("LoadPf", (JEXEC, rtr.jail, PFCTL, "-f", path))
 
-    # gc: processes, then epairs, then jails, then state directories
+    # collect processes, epairs, jails and state directories in that order
     jail.collect(
         acts,
         jails,

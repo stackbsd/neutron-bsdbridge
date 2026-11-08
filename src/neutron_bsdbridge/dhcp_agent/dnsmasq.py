@@ -21,7 +21,7 @@ class Subnet:
 
 @dataclasses.dataclass(frozen=True)
 class HostEntry:
-    """One reservation: a port's allocation in one subnet."""
+    """One port's reservation in one subnet."""
 
     mac: str
     ip: str

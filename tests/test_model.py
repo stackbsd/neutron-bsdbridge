@@ -1,4 +1,4 @@
-"""Tests for the model: canonicalization and the loud-error contract."""
+"""Model tests."""
 
 import os
 import sys

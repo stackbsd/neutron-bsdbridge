@@ -1,4 +1,4 @@
-"""l3 agent tests: spec building, fip status reporting, failure handling."""
+"""l3 agent tests."""
 
 import os
 import sys

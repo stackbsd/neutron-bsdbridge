@@ -46,7 +46,7 @@ def link_local(mac):
 
 
 def port_value(rule):
-    """Return an SG rule's port as an int, a range string, or None."""
+    """Return an SG rule's port or port range."""
     lo, hi = rule.get("port_range_min"), rule.get("port_range_max")
     if lo is None:
         return None
@@ -211,7 +211,7 @@ def build(ports, sg_info, interface_mappings, vxlan_conf=None, slow_ports=None):
                     segment["vlan"] = port["segmentation_id"]
                 stanza["segment"] = segment
 
-        # member: a service epair is attached hardware with no policy
+        # a service epair is attached hardware with no policy
         member = {"description": constants.DESCRIPTION_PREFIX + port["port_id"]}
         if mtu:
             member["mtu"] = mtu

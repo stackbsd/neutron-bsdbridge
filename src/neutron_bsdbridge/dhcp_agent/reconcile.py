@@ -52,7 +52,7 @@ def reconcile(desired, base, run=default_run, dnsmasq_path=constants.DNSMASQ):
             acts, net.jail, constants.DHCP_JAIL_IF, jail_if_text, net.mac, net.ips
         )
 
-        # dnsmasq: restart on a changed argv, HUP on changed files
+        # restart dnsmasq on a changed argv and HUP it on changed files
         wanted = dnsmasq_mod.argv(net, base, dnsmasq_path)
         cmd_path = os.path.join(directory, "cmd")
         try:
@@ -79,7 +79,7 @@ def reconcile(desired, base, run=default_run, dnsmasq_path=constants.DNSMASQ):
         elif dirty:
             acts.do("ReloadDnsmasq", (KILL, "-HUP", str(pid)))
 
-    # gc: processes, then epairs, then jails, then state directories
+    # collect processes, epairs, jails and state directories in that order
     jail.collect(
         acts,
         jails,

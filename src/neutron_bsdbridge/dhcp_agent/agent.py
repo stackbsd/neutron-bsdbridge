@@ -173,7 +173,7 @@ class BsdBridgeDhcpAgent:
         self._dirty = True
 
     def _own_port(self, net):
-        """Return this host's dhcp port on a network, or None."""
+        """Return this host's dhcp port on a network."""
         device_id = names.dhcp_device_id(net["id"], self.host)
         for port in net.get("ports", []):
             if port.get("device_id") == device_id:

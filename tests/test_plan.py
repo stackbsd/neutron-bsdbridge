@@ -1,4 +1,4 @@
-"""Planner tests: (desired, kernel) fixture pairs against expected ops."""
+"""Planner tests."""
 
 import os
 import sys

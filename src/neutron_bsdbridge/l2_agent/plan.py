@@ -187,7 +187,7 @@ def uplink_names(bridge_name, bridge, config):
                 f"derived vlan name {name!r} exceeds IFNAMSIZ. Shorten the trunk name."
             )
         return [name]
-    # flat: the physnet NIC itself joins
+    # a flat segment joins the physnet NIC itself
     return [trunk]
 
 
@@ -233,13 +233,13 @@ def uplink_creates(bname, seg, names, kernel):
         if name not in kernel:
             parent = name.rsplit(".", 1)[0]
             ops.append(CreateVlan(name=name, parent=parent, vid=seg.vlan))
-    # flat: nothing to create, the NIC is attached hardware
+    # a flat NIC is attached hardware so nothing is created
     return ops
 
 
 def pf_ops_for(mname, member, config, pf_state):
     """Return the pf-plane ops one member needs, as (load_op, table_ops)."""
-    # pf_state None: the anchor loads only when the interface is manufactured
+    # without pf_state the anchor loads only on a manufactured interface
     filt = config.filter.get(member.filter) if member.filter else None
     if filt is None and member.bind is None:
         return None, []

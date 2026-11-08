@@ -1,4 +1,4 @@
-"""Agent tests: the sync path, cold-start recovery, and the devd filter."""
+"""L2 agent tests."""
 
 import json
 import os

@@ -157,7 +157,7 @@ class AnchorState:
 
 
 def parse_rules_hash(sr_text):
-    """Parse pfctl -sr output into the loaded config hash, or None."""
+    """Parse pfctl -sr output into the loaded config hash."""
     m = CFG_RE.search(sr_text or "")
     return m.group("hash") if m else None
 
