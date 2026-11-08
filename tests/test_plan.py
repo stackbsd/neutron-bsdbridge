@@ -120,6 +120,14 @@ class CreateTestCase(unittest.TestCase):
             "the anchor must load before the tap can be opened",
         )
 
+    def test_create_tap_carries_the_member_mtu(self):
+        """A manufactured tap is created at its member mtu."""
+        tree = {"blue": {"member": {"tap00000000-01": {"type": "tap", "mtu": 1450}}}}
+        p = plan.diff(cfg(bridge=tree), kernel())
+        self.assertIn(
+            plan.CreateTap(name="tap00000000-01", description="", mtu=1450), p.adds
+        )
+
     def test_flat_segment_members_the_nic_without_creating_it(self):
         """A flat segment members the physnet NIC without creating anything."""
         tree = {"flatnet": {"segment": {"physnet": "phys0"}}}

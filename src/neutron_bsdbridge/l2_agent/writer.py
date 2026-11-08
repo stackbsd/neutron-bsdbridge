@@ -63,6 +63,8 @@ def argv_for(op):
         argv = [IFCONFIG, "tap", "create", "name", op.name]
         if op.description:
             argv += ["descr", op.description]
+        if op.mtu:
+            argv += ["mtu", str(op.mtu)]
         argv += ["group", OWNED_GROUP, "up"]
         return tuple(argv)
     if t is plan_mod.AddMember:

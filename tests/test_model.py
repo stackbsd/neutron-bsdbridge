@@ -55,6 +55,11 @@ class LoudErrorTestCase(unittest.TestCase):
             {"in": {"10": {"action": "pass"}, "010": {"action": "block"}}},
         )
 
+    def test_member_mtu_below_the_minimum_is_refused(self):
+        """A member mtu below 68 is refused."""
+        self.assertRaises(model.SchemaError, model.Member.from_tree, {"mtu": 67})
+        self.assertEqual(1450, model.Member.from_tree({"mtu": 1450}).mtu)
+
     def test_member_name_must_fit_ifnamsiz(self):
         """A member name longer than IFNAMSIZ is refused."""
         self.assertRaises(

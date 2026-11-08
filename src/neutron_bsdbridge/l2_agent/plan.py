@@ -56,6 +56,7 @@ class CreateTap(Op):
 
     name: str
     description: str
+    mtu: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -277,7 +278,9 @@ def diff(config, kernel, pf_state=None):
                     # create, load policy, then member, so the anchor exists
                     # before anything can open the tap
                     plan.adds.append(
-                        CreateTap(name=mname, description=member.description)
+                        CreateTap(
+                            name=mname, description=member.description, mtu=member.mtu
+                        )
                     )
                     if load is not None:
                         plan.adds.append(load)

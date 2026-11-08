@@ -60,6 +60,32 @@ class ArgvTestCase(unittest.TestCase):
         argv = writer.argv_for(plan.CreateTap(name="tapx", description=""))
         self.assertNotIn("descr", argv)
 
+    def test_create_tap_with_mtu_sets_it_before_the_group(self):
+        """CreateTap sets the mtu before the group."""
+        argv = writer.argv_for(plan.CreateTap(name="tapx", description="d", mtu=1450))
+        self.assertEqual(
+            (
+                "/sbin/ifconfig",
+                "tap",
+                "create",
+                "name",
+                "tapx",
+                "descr",
+                "d",
+                "mtu",
+                "1450",
+                "group",
+                "l2-neutron",
+                "up",
+            ),
+            argv,
+        )
+
+    def test_create_tap_without_mtu_omits_it(self):
+        """CreateTap leaves mtu out of the argv when it is unset."""
+        argv = writer.argv_for(plan.CreateTap(name="tapx", description="d"))
+        self.assertNotIn("mtu", argv)
+
     def test_load_anchor_feeds_pfctl_stdin(self):
         """LoadAnchor maps to pfctl -f - so the ruleset arrives on stdin."""
         argv = writer.argv_for(

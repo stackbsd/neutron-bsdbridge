@@ -8,6 +8,7 @@ MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
 
 # IFNAMSIZ less the NUL
 IFNAME_MAX = 15
+MTU_MIN = 68
 
 ACTION_RE = re.compile(r"pass|block")
 PROTO_RE = re.compile(r"tcp|udp|icmp|icmp6")
@@ -240,6 +241,7 @@ class Member(Model):
     filter: str | None = None
     description: str = ""
     bind: Bind | None = None
+    mtu: int | None = None
 
     def __post_init__(self):
         """Validate field shapes and the closed type vocabulary."""
@@ -249,6 +251,8 @@ class Member(Model):
             check_str(self, "filter")
         check_str(self, "description")
         check_model(self, "bind", Bind)
+        if self.mtu is not None:
+            check_int(self, "mtu", ge=MTU_MIN)
 
 
 @dataclasses.dataclass
