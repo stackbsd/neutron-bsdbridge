@@ -40,6 +40,30 @@ FAST_RETRY_MISSES = 10
 BINDING_MISS_LIMIT = 60
 
 
+def vxlan_conf(conf, run=default_run):
+    """Return the resolved vxlan settings."""
+    vx = conf.vxlan
+    if not vx.local_ip:
+        return None
+    if ifconfig.owner_of(vx.local_ip, run) is None:
+        raise ValueError(
+            f"vxlan local_ip {vx.local_ip} is not assigned to any interface. "
+            "Assign it to the underlay interface or correct local_ip."
+        )
+    return {"local": str(vx.local_ip), "port": vx.udp_port, "ttl": vx.ttl}
+
+
+def configurations(conf, vxlan):
+    """Return the configurations the agent reports to the server."""
+    out = {
+        "physical_interface_mappings": dict(conf.bsdbridge.physical_interface_mappings)
+    }
+    if vxlan is not None:
+        out["tunnel_types"] = ["vxlan"]
+        out["tunneling_ip"] = vxlan["local"]
+    return out
+
+
 class ReconcileError(Exception):
     """A reconcile pass left failed receipts."""
 
@@ -62,6 +86,7 @@ class BsdBridgeAgent:
         self._writer = writer or writer_mod.Writer(dry_run=False)
         self._reader = reader
         self._run = run or default_run
+        self._vxlan = vxlan_conf(conf, self._run)
         self._dirty = True
         self._failures = 0
         self._devices_up = set()
@@ -73,11 +98,7 @@ class BsdBridgeAgent:
             "availability_zone": conf.AGENT.availability_zone,
             "topic": "N/A",
             "agent_type": constants.AGENT_TYPE_BSDBRIDGE,
-            "configurations": {
-                "physical_interface_mappings": dict(
-                    conf.bsdbridge.physical_interface_mappings
-                ),
-            },
+            "configurations": configurations(conf, self._vxlan),
             "start_flag": True,
         }
 
@@ -220,7 +241,10 @@ class BsdBridgeAgent:
 
         # build and reconcile
         config, rendered_devices = port_config.build(
-            details, sg_info, self.conf.bsdbridge.physical_interface_mappings
+            details,
+            sg_info,
+            self.conf.bsdbridge.physical_interface_mappings,
+            self._vxlan,
         )
         result = reconcile_mod.reconcile(
             config, writer=self._writer, reader=self._reader, run=self._run
@@ -361,10 +385,11 @@ class BsdBridgeAgent:
         )
 
         LOG.info(
-            "started on %s (%d recovered device(s), mappings %s)",
+            "started on %s (%d recovered device(s), mappings %s, vxlan %s)",
             self.host,
             len(self._candidates),
             dict(self.conf.bsdbridge.physical_interface_mappings),
+            self._vxlan or "disabled",
         )
         interval = self.conf.bsdbridge.sync_interval
         last_full = 0.0

@@ -79,6 +79,7 @@ def make_agent(tmpdir, devices, writer_obj=None, reader=None):
     )
     a._reader = reader or (lambda names: ifconfig.KernelInterfaces({}, ()))
     a._run = lambda argv: (1, "", "")
+    a._vxlan = None
     a._dirty = True
     a._failures = 0
     a._devices_up = set()
@@ -204,6 +205,54 @@ class RecoveryTestCase(unittest.TestCase):
         a = make_agent(self.tmp.name, devices=set(), reader=reader)
         a._save_devices(["from-file"])
         self.assertEqual({"from-file", PORT_ID}, a._recover_devices())
+
+
+def vxlan_section(**kw):
+    base = {"local_ip": "192.168.50.150", "udp_port": 4789, "ttl": 64}
+    base.update(kw)
+    return types.SimpleNamespace(
+        bsdbridge=types.SimpleNamespace(physical_interface_mappings={"p": "ix0"}),
+        vxlan=types.SimpleNamespace(**base),
+    )
+
+
+def nic_run(argv):
+    if argv == ("/sbin/ifconfig",):
+        return (
+            0,
+            "vtnet0: flags=8863<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> mtu 1500\n"
+            "\tinet 192.168.50.150 netmask 0xffffff00 broadcast 192.168.50.255\n",
+            "",
+        )
+    return 1, "", "does not exist"
+
+
+class VxlanConfTestCase(unittest.TestCase):
+    def test_unset_local_ip_disables_vxlan(self):
+        conf = vxlan_section(local_ip=None)
+        self.assertIsNone(agent_mod.vxlan_conf(conf, nic_run))
+        self.assertNotIn("tunnel_types", agent_mod.configurations(conf, None))
+
+    def test_settings_come_from_the_section(self):
+        vx = agent_mod.vxlan_conf(vxlan_section(), nic_run)
+        self.assertEqual({"local": "192.168.50.150", "port": 4789, "ttl": 64}, vx)
+
+    def test_local_ip_not_on_an_interface_is_refused(self):
+        self.assertRaises(
+            ValueError,
+            agent_mod.vxlan_conf,
+            vxlan_section(local_ip="192.168.50.151"),
+            nic_run,
+        )
+
+    def test_enabled_vxlan_is_advertised(self):
+        conf = vxlan_section()
+        configurations = agent_mod.configurations(
+            conf, agent_mod.vxlan_conf(conf, nic_run)
+        )
+        self.assertEqual(["vxlan"], configurations["tunnel_types"])
+        self.assertEqual("192.168.50.150", configurations["tunneling_ip"])
+        self.assertEqual({"p": "ix0"}, configurations["physical_interface_mappings"])
 
 
 class DevdTestCase(unittest.TestCase):

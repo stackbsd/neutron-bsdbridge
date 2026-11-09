@@ -1,4 +1,4 @@
-"""Config options used by the L2 and dhcp agents."""
+"""Config options used by the agents."""
 
 from oslo_config import cfg
 
@@ -32,7 +32,28 @@ OPTS = [
     ),
 ]
 
+VXLAN_OPTS = [
+    cfg.IPOpt(
+        "local_ip",
+        version=4,
+        help="Local VTEP address for vxlan networks, unset to disable vxlan.",
+    ),
+    cfg.PortOpt(
+        "udp_port",
+        default=constants.VXLAN_PORT,
+        help="UDP port vxlan traffic is sent from and to.",
+    ),
+    cfg.IntOpt(
+        "ttl",
+        default=constants.VXLAN_TTL,
+        min=1,
+        max=255,
+        help="TTL of encapsulated vxlan packets.",
+    ),
+]
+
 
 def register(conf=cfg.CONF):
-    """Register the shared option group."""
+    """Register the shared and vxlan option groups."""
     conf.register_opts(OPTS, group="bsdbridge")
+    conf.register_opts(VXLAN_OPTS, group="vxlan")
