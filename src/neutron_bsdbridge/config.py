@@ -50,6 +50,12 @@ VXLAN_OPTS = [
         max=255,
         help="TTL of encapsulated vxlan packets.",
     ),
+    cfg.IntOpt(
+        "slow_path_rate",
+        default=100,
+        min=1,
+        help="Frames per second each vxlan network may hand to the slow path.",
+    ),
 ]
 
 
