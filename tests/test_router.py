@@ -1,5 +1,6 @@
 """Router spec tests: RPC dicts in, addresses, routes and pf text out."""
 
+import dataclasses
 import os
 import sys
 import unittest
@@ -247,6 +248,17 @@ class RenderTestCase(unittest.TestCase):
         self.assertNotIn("\nnat on", text)
         self.assertIn("binat on", text)
         self.assertNotEqual(with_snat, without)
+
+    def test_a_gateway_without_an_ipv4_address_gets_no_nat_rule(self):
+        r = dataclasses.replace(
+            self.r,
+            floating_ips=(),
+            gateway=dataclasses.replace(
+                self.r.gateway, ips=(("2001:db8:ffff::b4", 64),)
+            ),
+        )
+        text, _hash = router.pf_text(r)
+        self.assertNotIn("nat on", text)
 
     def test_no_gateway_means_no_translation(self):
         text, _ = router.pf_text(router.from_rpc(rpc_router(gw_port=None)))

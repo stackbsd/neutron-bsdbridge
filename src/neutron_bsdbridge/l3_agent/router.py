@@ -253,10 +253,10 @@ def pf_text(router):
                 f"binat on {qg} inet from {fip.fixed} to any -> {fip.floating}"
             )
         internal = sorted({c for port in router.interfaces for c in port.cidrs})
-        if router.enable_snat and internal:
+        source = next((ip for ip, _ in gateway.ips if ":" not in ip), None)
+        if router.enable_snat and internal and source:
             lines.append(
-                f"nat on {qg} inet from {{ {', '.join(internal)} }} to any "
-                f"-> {gateway.ips[0][0]}"
+                f"nat on {qg} inet from {{ {', '.join(internal)} }} to any -> {source}"
             )
     lines += scope_rules(router)
     cfg_hash = hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
