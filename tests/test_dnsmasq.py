@@ -1,5 +1,6 @@
-"""dnsmasq rendering tests: the address plan in, files and argv out."""
+"""dnsmasq rendering tests."""
 
+import dataclasses
 import os
 import sys
 import unittest
@@ -111,12 +112,29 @@ class OptsTestCase(unittest.TestCase):
         self.assertIn("tag:s1,option:router\n", text)
         self.assertIn("tag:s1,option:dns-server\n", text)
 
+    def test_network_mtu_is_sent_per_subnet(self):
+        """Each subnet carries the network mtu as option 26."""
+        net = dataclasses.replace(
+            NET,
+            mtu=1450,
+            subnets=(*NET.subnets, dnsmasq.Subnet(id="s2", cidr="10.1.0.0/24")),
+        )
+        text = dnsmasq.opts_text(net)
+        self.assertIn(
+            "tag:daa048b5-450c-4c4b-97a6-c5f5542289c4,option:mtu,1450\n", text
+        )
+        self.assertIn("tag:s2,option:mtu,1450\n", text)
+
+    def test_unknown_mtu_is_not_sent(self):
+        """A network without an mtu sends no mtu option."""
+        self.assertNotIn("option:mtu", dnsmasq.opts_text(NET))
+
 
 class ArgvTestCase(unittest.TestCase):
     """The dnsmasq invocation."""
 
     def test_static_range_per_subnet(self):
-        """Each subnet renders a tagged static range: serve, never invent."""
+        """Each subnet renders a tagged static range."""
         argv = dnsmasq.argv(NET, "/var/db/x")
         self.assertIn(
             "--dhcp-range=set:daa048b5-450c-4c4b-97a6-c5f5542289c4,"

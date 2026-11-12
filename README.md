@@ -7,7 +7,7 @@ Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD base
 ### Features
 
 - ML2 mechanism driver that binds ports with `vif_type=bridge` and publishes to Nova
-- Implements one bridge per Neutron segment for vlan, flat and local networks.
+- Implements one bridge per Neutron segment for vlan, flat, vxlan and local networks.
 - L2 agent to manage bridge, taps and security group rules
 - Port security
 - DHCP agent running one dnsmasq per network inside separate VNET jails
@@ -17,16 +17,16 @@ Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD base
 
 ### Roadmap
 
-- vxlan segments
 - metadata agent
 - HA routers (CARP+pfsync)
+- prevent ARP spoofing in port security
 
 ### Limitations
 
-- ARP is not inspected
+- Distributed routers are unlikely to ever be supported
+- Tenant vxlan networks do not forward application broadcast or multicast traffic - only ARP, DHCP and IPv6 neighbour discovery is relayed
 - A port with port security sends IPv6 only from its fixed addresses and the link-local address derived from its MAC
 - A router takes its IPv6 default route from the gateway of the external subnet, not from router advertisements
-- Distributed routers probably won't be supported
 
 ## Host requirements
 
@@ -38,6 +38,13 @@ Add to the host `pf.conf`:
 set state-policy if-bound
 ether anchor "l2-neutron/port/*"
 anchor "l2-neutron/port/*"
+```
+
+For vxlan networks, port 4789 must be open on the host underlay interface (the one assigned `[vxlan] local_ip` in the config) and allow loopback traffic for the relay service:
+
+```
+pass on vtnet0 proto udp to port 4789
+pass on lo0 proto udp to 127.0.0.1
 ```
 
 ## Configuration
@@ -67,6 +74,8 @@ Map the physical network name in OpenStack to the actual uplink/trunk interfaces
 
 For vlan networks, the L2 agent will create a vlan interface on top of the mapped physical interface and plug it to the respective bridge for you, but make sure that the actual network trunks those VLAN between hosts.
 
+### Tenant networks with vlan
+
 You can enable self-service/tenant networks based on VLANs by configuring a range of IDs that can be used:
 
 ``` ini
@@ -80,8 +89,37 @@ network_vlan_ranges = physnet1:100:199
 Now any networks created in non-admin projects will be allocated a vlan segment automatically (the `ix0.<vid>` uplink is created and plugged by the L2 agent).
 Same as above, ensure that the network fabric actually trunks this range of VLAN IDs to the interface on each host which is mapped in `physical_interface_mappings`.
 
+### Tenant networks with vxlan
+
+It is usually better to enable self-service/tenant networks using vxlan, the only requirement is that the hosts can reach each other on UDP port 4789, routed or not.
+
+Set `local_ip` to the IP assigned to the underlay network interface:
+
+`bsdbridge_agent.ini`
+
+```ini
+[vxlan]
+local_ip = 192.168.50.150
+```
+
+Enable the l2population mechanism driver, set the tenant network type to vxlan and configure the VNI range:
+
+`ml2_conf.ini`
+
+```ini
+[ml2]
+mechanism_drivers = bsdbridge,l2population
+type_drivers = local,flat,vlan,vxlan
+tenant_network_types = vxlan
+
+[ml2_type_vxlan]
+vni_ranges = 1:65535
+```
+
+Note that the MTU in a vxlan neutron network is 1450. If you need a 1500 MTU inside the guests, you can do it by setting `global_physnet_mtu = 1550` and enable jumbo frames on the underlay network.
+
 ## IPv6
 
-Tenant IPv6 subnets are routed without translation, so there is no SNAT and no floating IPs for IPv6.
+In OpenStack tenant IPv6 subnets are routed without translation and there is no support for SNAT or floating IPs for IPv6.
 
 The external network has to route tenant prefixes to the router, either with static routes or with BGP using `neutron-dynamic-routing`.

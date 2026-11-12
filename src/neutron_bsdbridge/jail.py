@@ -8,7 +8,7 @@ from neutron_bsdbridge.utils import Receipt, default_run
 
 
 class Result:
-    """One reconcile pass: its receipts."""
+    """Receipts of one reconcile pass."""
 
     def __init__(self, receipts):
         """Hold the pass's receipts."""
@@ -89,7 +89,7 @@ def ensure_jail(acts, name, jails):
     return True
 
 
-def ensure_epair(acts, jail, host_if, jail_if, port_id, group, host_ifs):
+def ensure_epair(acts, jail, host_if, jail_if, port_id, group, host_ifs, mtu=None):
     """Ensure one epair spans the host and a jail, returning the jail end's text."""
     rc, host_if_text, _err = acts.run((IFCONFIG, host_if))
     have_host = rc == 0
@@ -116,6 +116,8 @@ def ensure_epair(acts, jail, host_if, jail_if, port_id, group, host_ifs):
             return None
         a_end = out.strip()
         b_end = a_end[:-1] + "b"
+        # the first member sets the bridge mtu and later ones are forced to it
+        mtu_args = ("mtu", str(mtu)) if mtu else ()
         acts.do(
             "NameHostIf",
             (
@@ -125,6 +127,7 @@ def ensure_epair(acts, jail, host_if, jail_if, port_id, group, host_ifs):
                 host_if,
                 "descr",
                 constants.DESCRIPTION_PREFIX + port_id,
+                *mtu_args,
                 "group",
                 group,
                 "up",
@@ -132,7 +135,9 @@ def ensure_epair(acts, jail, host_if, jail_if, port_id, group, host_ifs):
         )
         host_ifs.add(host_if)
         acts.do("MoveJailIf", (IFCONFIG, b_end, "vnet", jail))
-        acts.do("NameJailIf", (JEXEC, jail, IFCONFIG, b_end, "name", jail_if))
+        acts.do(
+            "NameJailIf", (JEXEC, jail, IFCONFIG, b_end, "name", jail_if, *mtu_args)
+        )
         rc, jail_if_text, _err = acts.run((JEXEC, jail, IFCONFIG, jail_if))
         have_jail = rc == 0
     return jail_if_text if have_jail else None
@@ -177,7 +182,7 @@ def ensure_addrs(acts, jail, jail_if, jail_if_text, mac, ips):
 
 
 def collect(acts, jails, desired_jails, host_ifs, desired_ifs):
-    """Tear down undesired jails: processes, then epairs, then the jails."""
+    """Tear down undesired jails with their processes and epairs."""
     for jail in sorted(jails - desired_jails):
         rc, out, _err = acts.run((JLS, "-j", jail, "jid"))
         if rc == 0 and (out or "").strip():

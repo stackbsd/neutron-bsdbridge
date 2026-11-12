@@ -1,4 +1,4 @@
-"""Desired-state builder fixtures: neutron RPC shapes in, the model out."""
+"""Port config builder tests."""
 
 import os
 import sys
@@ -304,6 +304,62 @@ class DesiredTestCase(unittest.TestCase):
         p = port(network_type="vlan", physical_network="ghostnet", segmentation_id=210)
         cfg, devices = port_config.build([p], SG_INFO, {})
         bridge = names.bridge_name("vlan", "ghostnet", 210, "x")
+        self.assertIsNone(cfg.bridge[bridge].segment)
+        self.assertEqual(1, len(devices))
+
+
+VXLAN_CONF = {"local": "10.255.0.11", "port": 4789, "ttl": 64}
+SLOW_PORTS = {5042: 61234}
+
+
+class VxlanPortTestCase(unittest.TestCase):
+    def test_vxlan_port_builds_its_segment_from_the_conf(self):
+        p = port(network_type="vxlan", segmentation_id=5042, mtu=1450)
+        cfg, _ = port_config.build([p], SG_INFO, {}, VXLAN_CONF, SLOW_PORTS)
+        bridge = cfg.bridge[names.bridge_name("vxlan", None, 5042, "x")]
+        vx = bridge.segment.vxlan
+        self.assertEqual(5042, vx.vni)
+        self.assertEqual("10.255.0.11", vx.local)
+        self.assertEqual(4789, vx.port)
+        self.assertEqual(61234, vx.remote_port)
+        self.assertEqual(64, vx.ttl)
+        self.assertEqual(1450, vx.mtu)
+        self.assertIsNone(bridge.segment.physnet)
+        self.assertEqual({}, cfg.physnet)
+
+    def test_every_member_carries_the_network_mtu(self):
+        ports = [
+            port(network_type="vxlan", segmentation_id=5042, mtu=1450),
+            port(
+                port_id="99999999-4bd1-4b58-a52e-b0b8ab779b74",
+                network_type="vxlan",
+                segmentation_id=5042,
+                mtu=1450,
+                device_owner="network:dhcp",
+            ),
+        ]
+        cfg, _ = port_config.build(ports, SG_INFO, {}, VXLAN_CONF, SLOW_PORTS)
+        bridge = cfg.bridge[names.bridge_name("vxlan", None, 5042, "x")]
+        self.assertEqual({1450}, {m.mtu for m in bridge.member.values()})
+
+    def test_unknown_mtu_is_left_unset(self):
+        cfg, _ = port_config.build([port(mtu=0)], SG_INFO, {})
+        member = next(iter(cfg.bridge.values())).member["tap3fb01977-a4"]
+        self.assertIsNone(member.mtu)
+
+    def test_vxlan_port_without_conf_renders_without_uplink(self):
+        p = port(network_type="vxlan", segmentation_id=5042, mtu=1450)
+        with self.assertLogs(port_config.LOG.logger, "WARNING"):
+            cfg, devices = port_config.build([p], SG_INFO, {})
+        bridge = names.bridge_name("vxlan", None, 5042, "x")
+        self.assertIsNone(cfg.bridge[bridge].segment)
+        self.assertEqual(1, len(devices))
+
+    def test_vxlan_port_without_a_slow_path_socket_renders_without_uplink(self):
+        p = port(network_type="vxlan", segmentation_id=5042, mtu=1450)
+        with self.assertLogs(port_config.LOG.logger, "WARNING"):
+            cfg, devices = port_config.build([p], SG_INFO, {}, VXLAN_CONF, {})
+        bridge = names.bridge_name("vxlan", None, 5042, "x")
         self.assertIsNone(cfg.bridge[bridge].segment)
         self.assertEqual(1, len(devices))
 

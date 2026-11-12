@@ -57,6 +57,41 @@ class VlanTestCase(unittest.TestCase):
         self.assertTrue(i.is_owned)
 
 
+class VxlanTestCase(unittest.TestCase):
+    """Vxlan blocks."""
+
+    def test_vni_endpoints_and_mtu(self):
+        """A vxlan parses its vni, local, remote, both ports, and mtu."""
+        i = ifconfig.parse(sample("ifconfig-vxlan.txt"))["vx1f5a50665c03"]
+        self.assertEqual(5042, i.vni)
+        self.assertEqual("10.0.0.114", i.vxlan_local)
+        self.assertEqual("127.0.0.1", i.vxlan_remote)
+        self.assertEqual(4789, i.vxlan_port)
+        self.assertEqual(61234, i.vxlan_remote_port)
+        self.assertEqual(1450, i.mtu)
+        self.assertEqual(("vxlan", "l2-neutron"), i.groups)
+        self.assertTrue(i.is_owned)
+
+    def test_multicast_group_parses_as_the_remote(self):
+        """A vxlan with a multicast group parses it as its remote."""
+        text = sample("ifconfig-vxlan.txt").replace(
+            "remote 127.0.0.1:61234", "group 239.1.19.178:4789"
+        )
+        i = ifconfig.parse(text)["vx1f5a50665c03"]
+        self.assertEqual("239.1.19.178", i.vxlan_remote)
+        self.assertEqual(4789, i.vxlan_remote_port)
+
+    def test_owner_of_finds_the_interface_with_the_address(self):
+        """owner_of returns the interface carrying an address."""
+        text = sample("ifconfig-plain-nic.txt") + sample("ifconfig-vxlan.txt")
+
+        def run(argv):
+            return 0, text, ""
+
+        self.assertEqual("vtnet0", ifconfig.owner_of("192.168.50.150", run).name)
+        self.assertIsNone(ifconfig.owner_of("192.168.50.151", run))
+
+
 class BridgeTestCase(unittest.TestCase):
     """Bridge blocks."""
 
@@ -67,6 +102,23 @@ class BridgeTestCase(unittest.TestCase):
         self.assertTrue(i.is_owned)
         self.assertEqual({"tapdeadbeef-00", "tapcafecafe-01"}, set(i.members))
         self.assertEqual(2000, i.maxaddr)
+
+    def test_member_flags_are_kept_per_member(self):
+        """A bridge keeps each member's flags, so a cleared DISCOVER shows."""
+        text = sample("ifconfig-bridge-with-vxlan.txt")
+        i = ifconfig.parse(text)["pb1f5a50665c03"]
+        self.assertEqual(("vx1f5a50665c03",), i.members)
+        self.assertEqual(
+            (("vx1f5a50665c03", frozenset({"LEARNING", "AUTOEDGE", "AUTOPTP"})),),
+            i.member_flags,
+        )
+        k = ifconfig.KernelInterfaces(ifconfig.parse(text), ["pb1f5a50665c03"])
+        self.assertNotIn("DISCOVER", k.member_flags("pb1f5a50665c03", "vx1f5a50665c03"))
+        self.assertEqual(frozenset(), k.member_flags("pb1f5a50665c03", "tap0"))
+        self.assertEqual(frozenset(), k.member_flags("nobridge", "tap0"))
+        with_tap = ifconfig.parse(sample("ifconfig-bridge-with-member.txt"))
+        k = ifconfig.KernelInterfaces(with_tap, [])
+        self.assertIn("DISCOVER", k.member_flags("pbd2db231d54fe", "tapdeadbeef-00"))
 
     def test_vlan_child_as_member(self):
         """A bridge with a vlan-child member parses that member."""

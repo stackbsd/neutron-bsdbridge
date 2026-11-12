@@ -211,6 +211,16 @@ class ReconcileTestCase(unittest.TestCase):
         self.assertIn("binat on " + QG, self.kernel.pf_rules[RTR.jail])
         self.assertIn("nat on " + QG, self.kernel.pf_rules[RTR.jail])
 
+    def test_epairs_carry_each_port_mtu_on_both_ends(self):
+        gw = dataclasses.replace(GW, mtu=1500)
+        port = dataclasses.replace(INT, mtu=1450)
+        rtr = dataclasses.replace(RTR, gateway=gw, interfaces=(port,))
+        result = self._reconcile([rtr])
+        self.assertEqual([], result.failed, [str(r) for r in result.failed])
+        self.assertEqual(1500, self.kernel.host_ifaces[gw.host_if]["mtu"])
+        self.assertEqual(1450, self.kernel.host_ifaces[port.host_if]["mtu"])
+        self.assertEqual(1450, self.kernel.jail_ifaces[(rtr.jail, QR)]["mtu"])
+
     def test_second_reconcile_does_nothing(self):
         self._reconcile([RTR])
         again = self._reconcile([RTR])

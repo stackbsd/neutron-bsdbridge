@@ -122,6 +122,8 @@ class FakeKernel:
                     entry["groups"].add(rest[rest.index("group") + 1])
                 if "descr" in rest:
                     entry["descr"] = rest[rest.index("descr") + 1]
+                if "mtu" in rest:
+                    entry["mtu"] = int(rest[rest.index("mtu") + 1])
                 ifaces[new] = entry
                 return 0, new + "\n", ""
             if rest[0] == "vnet":
@@ -139,7 +141,10 @@ class FakeKernel:
             if not rest:
                 return 0, self._jail_if_text(jail_name, name), ""
             if rest[0] == "name":
-                self.jail_ifaces[(jail_name, rest[1])] = self.jail_ifaces.pop(key)
+                entry = self.jail_ifaces.pop(key)
+                if "mtu" in rest:
+                    entry["mtu"] = int(rest[rest.index("mtu") + 1])
+                self.jail_ifaces[(jail_name, rest[1])] = entry
                 return 0, rest[1] + "\n", ""
             if rest[0] == "destroy":
                 del self.jail_ifaces[key]

@@ -36,6 +36,8 @@ class BsdBridgeMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
             return False
         if network_type == "local":
             return True
+        if network_type == "vxlan":
+            return "vxlan" in agent["configurations"].get("tunnel_types", [])
         return segment[api.PHYSICAL_NETWORK] in self.get_mappings(agent)
 
     def get_vif_details(self, context, agent, segment):

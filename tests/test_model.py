@@ -1,4 +1,4 @@
-"""Tests for the model: canonicalization and the loud-error contract."""
+"""Model tests."""
 
 import os
 import sys
@@ -55,6 +55,11 @@ class LoudErrorTestCase(unittest.TestCase):
             {"in": {"10": {"action": "pass"}, "010": {"action": "block"}}},
         )
 
+    def test_member_mtu_below_the_minimum_is_refused(self):
+        """A member mtu below 68 is refused."""
+        self.assertRaises(model.SchemaError, model.Member.from_tree, {"mtu": 67})
+        self.assertEqual(1450, model.Member.from_tree({"mtu": 1450}).mtu)
+
     def test_member_name_must_fit_ifnamsiz(self):
         """A member name longer than IFNAMSIZ is refused."""
         self.assertRaises(
@@ -62,6 +67,13 @@ class LoudErrorTestCase(unittest.TestCase):
             model.Bridge.from_tree,
             {"member": {"tap0123456789abc": {"type": "tap"}}},
         )
+
+
+VXLAN = {
+    "vni": 5042,
+    "local": "10.255.0.11",
+    "remote_port": 61234,
+}
 
 
 class SegmentTestCase(unittest.TestCase):
@@ -81,8 +93,34 @@ class SegmentTestCase(unittest.TestCase):
         self.assertRaises(
             model.SchemaError,
             model.Segment.from_tree,
-            {"physnet": "p0", "vxlan": {"vni": 5042, "local": "10.255.0.11"}},
+            {"physnet": "p0", "vxlan": VXLAN},
         )
+
+    def test_vxlan_takes_the_unicast_fields(self):
+        """A vxlan segment carries port, ttl and mtu with routable defaults."""
+        seg = model.Segment.from_tree({"vxlan": dict(VXLAN, mtu=1450)})
+        self.assertEqual(4789, seg.vxlan.port)
+        self.assertEqual(64, seg.vxlan.ttl)
+        self.assertEqual(1450, seg.vxlan.mtu)
+
+    def test_vxlan_refuses_bad_fields(self):
+        """Malformed vxlan fields are refused."""
+        for bad in (
+            {"peers": ["10.255.0.12"]},
+            {"group": "239.1.19.178"},
+            {"local": "not-an-address"},
+            {"local": "2001:db8::1"},
+            {"port": 0},
+            {"port": 65536},
+            {"remote_port": 0},
+            {"remote_port": 65536},
+            {"ttl": 0},
+        ):
+            self.assertRaises(
+                model.SchemaError,
+                model.Segment.from_tree,
+                {"vxlan": dict(VXLAN, **bad)},
+            )
 
     def test_empty_segment_is_refused(self):
         """An empty segment stanza is refused."""

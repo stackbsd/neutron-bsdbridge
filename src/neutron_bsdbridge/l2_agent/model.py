@@ -1,13 +1,17 @@
 """Desired-state model dataclasses."""
 
 import dataclasses
+import ipaddress
 import re
 from typing import ClassVar
+
+from neutron_bsdbridge.constants import VXLAN_PORT, VXLAN_TTL
 
 MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
 
 # IFNAMSIZ less the NUL
 IFNAME_MAX = 15
+MTU_MIN = 68
 
 ACTION_RE = re.compile(r"pass|block")
 PROTO_RE = re.compile(r"tcp|udp|icmp|icmp6")
@@ -108,7 +112,7 @@ def check_model_map(obj, name, model_cls):
 
 
 class Model:
-    """Base for every model: tree construction with unknown keys refused."""
+    """Base for every model built from a tree."""
 
     # tree key -> field name, for keys that are not identifiers
     _aliases: ClassVar[dict] = {}
@@ -160,7 +164,7 @@ class Model:
 
 @dataclasses.dataclass
 class Physnet(Model):
-    """A physical fabric: its trunk parent interface."""
+    """A physical fabric and its trunk interface."""
 
     trunk: str
     description: str = ""
@@ -173,22 +177,35 @@ class Physnet(Model):
 
 @dataclasses.dataclass
 class VxlanSegment(Model):
-    """A vxlan realization: VNI, local endpoint, and peer endpoints."""
+    """A unicast vxlan realization."""
 
     vni: int
     local: str
-    peers: list[str] = dataclasses.field(default_factory=list)
+    remote_port: int
+    port: int = VXLAN_PORT
+    ttl: int = VXLAN_TTL
+    mtu: int | None = None
 
     def __post_init__(self):
-        """Validate field shapes."""
+        """Validate field shapes and require an IPv4 local address."""
         check_int(self, "vni", ge=1, le=16777215)
         check_str(self, "local")
-        check_str_list(self, "peers")
+        check_int(self, "remote_port", ge=1, le=65535)
+        check_int(self, "port", ge=1, le=65535)
+        check_int(self, "ttl", ge=1, le=255)
+        if self.mtu is not None:
+            check_int(self, "mtu", ge=MTU_MIN)
+        try:
+            local = ipaddress.ip_address(self.local)
+        except ValueError as exc:
+            raise SchemaError(f"VxlanSegment.local: {exc}") from None
+        if local.version != 4:
+            raise SchemaError(f"VxlanSegment.local: {self.local!r} is not IPv4")
 
 
 @dataclasses.dataclass
 class Segment(Model):
-    """A bridge's segment realization: vlan, flat, or vxlan."""
+    """A bridge's segment realization."""
 
     _nested: ClassVar[dict] = {"vxlan": VxlanSegment}
 
@@ -215,7 +232,7 @@ class Segment(Model):
 
 @dataclasses.dataclass
 class Bind(Model):
-    """Port security for one member: the locked MAC and addresses."""
+    """Port security binding for one member."""
 
     mac: str
     address: str | None = None
@@ -240,6 +257,7 @@ class Member(Model):
     filter: str | None = None
     description: str = ""
     bind: Bind | None = None
+    mtu: int | None = None
 
     def __post_init__(self):
         """Validate field shapes and the closed type vocabulary."""
@@ -249,11 +267,13 @@ class Member(Model):
             check_str(self, "filter")
         check_str(self, "description")
         check_model(self, "bind", Bind)
+        if self.mtu is not None:
+            check_int(self, "mtu", ge=MTU_MIN)
 
 
 @dataclasses.dataclass
 class Bridge(Model):
-    """One bridge: segment realization plus its members."""
+    """One bridge with its segment and members."""
 
     _aliases: ClassVar[dict] = {"max-addresses": "max_addresses"}
     _nested: ClassVar[dict] = {"segment": Segment}
@@ -329,7 +349,7 @@ def int_rules(rules):
 
 @dataclasses.dataclass
 class Filter(Model):
-    """A named filter: numbered in and out rules, in the workload's view."""
+    """A named filter of numbered in and out rules."""
 
     _aliases: ClassVar[dict] = {"in": "in_"}
     _nested_map: ClassVar[dict] = {"in_": FilterRule, "out": FilterRule}

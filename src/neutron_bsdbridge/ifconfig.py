@@ -10,8 +10,12 @@ HEADER_RE = re.compile(
     r"^(?P<name>[A-Za-z0-9_.:-]+): flags=[0-9a-fA-Fx]*<(?P<flags>[^>]*)>"
     r"(?: metric (?P<metric>\d+))?(?: mtu (?P<mtu>\d+))?"
 )
-MEMBER_RE = re.compile(r"^\s+member: (?P<name>\S+) flags=")
+MEMBER_RE = re.compile(r"^\s+member: (?P<name>\S+) flags=[0-9a-fx]*<(?P<flags>[^>]*)>")
 VLAN_RE = re.compile(r"^\s+vlan: (?P<vid>\d+) .*parent interface: (?P<parent>\S+)")
+VXLAN_RE = re.compile(
+    r"^\s+vxlan vni (?P<vni>\d+) local \[?(?P<local>[^\]\s]+?)\]?:(?P<port>\d+)"
+    r" (?:group|remote) \[?(?P<remote>[^\]\s]+?)\]?:(?P<remote_port>\d+)"
+)
 MAXADDR_RE = re.compile(r"\bmaxaddr (?P<maxaddr>\d+)\b")
 ETHER_RE = re.compile(r"^\s+ether (?P<ether>[0-9a-f:]{17})")
 INET_RE = re.compile(r"^\s+inet (?P<addr>\S+) netmask (?P<mask>0x[0-9a-f]{8})")
@@ -39,6 +43,12 @@ class Interface:
     maxaddr: int | None = None
     vlan: int | None = None
     vlan_parent: str | None = None
+    vni: int | None = None
+    vxlan_local: str | None = None
+    vxlan_remote: str | None = None
+    vxlan_port: int | None = None
+    vxlan_remote_port: int | None = None
+    member_flags: tuple = ()
 
     @property
     def up(self):
@@ -66,18 +76,25 @@ class KernelInterfaces:
         self.addrs = addrs or {}
 
     def static_lock(self, bridge, member):
-        """Return the statically locked MAC for a member, or None."""
+        """Return the statically locked MAC for a member."""
         for mac, mem, static in self.addrs.get(bridge, []):
             if mem == member and static:
                 return mac
         return None
+
+    def member_flags(self, bridge, member):
+        """Return the flags a bridge reports for one member."""
+        iface = self.interfaces.get(bridge)
+        if iface is None:
+            return frozenset()
+        return dict(iface.member_flags).get(member, frozenset())
 
     def bridges(self):
         """Return the bridges by name."""
         return {n: i for n, i in self.interfaces.items() if i.is_bridge}
 
     def members_of(self, bridge):
-        """Return a bridge's member names, or () when it is absent."""
+        """Return a bridge's member names."""
         iface = self.interfaces.get(bridge)
         return iface.members if iface else ()
 
@@ -110,12 +127,19 @@ def parse_block(lines):
         "mtu": int(header.group("mtu")) if header.group("mtu") else None,
     }
     members = []
+    member_flags = []
     inets = []
     inet6s = []
     for line in lines[1:]:
         m = MEMBER_RE.match(line)
         if m:
             members.append(m.group("name"))
+            member_flags.append(
+                (
+                    m.group("name"),
+                    frozenset(f for f in m.group("flags").split(",") if f),
+                )
+            )
             continue
         m = INET_RE.match(line)
         if m:
@@ -131,6 +155,14 @@ def parse_block(lines):
         if m:
             fields["vlan"] = int(m.group("vid"))
             fields["vlan_parent"] = m.group("parent")
+            continue
+        m = VXLAN_RE.match(line)
+        if m:
+            fields["vni"] = int(m.group("vni"))
+            fields["vxlan_local"] = m.group("local")
+            fields["vxlan_port"] = int(m.group("port"))
+            fields["vxlan_remote"] = m.group("remote")
+            fields["vxlan_remote_port"] = int(m.group("remote_port"))
             continue
         m = ETHER_RE.match(line)
         if m:
@@ -154,6 +186,7 @@ def parse_block(lines):
     if "descr" in fields:
         fields["description"] = fields.pop("descr")
     fields["members"] = tuple(members)
+    fields["member_flags"] = tuple(member_flags)
     fields["inets"] = tuple(inets)
     fields["inet6s"] = tuple(inet6s)
     return Interface(**fields)
@@ -166,6 +199,15 @@ def parse(text):
         iface = parse_block(block)
         out[iface.name] = iface
     return out
+
+
+def owner_of(address, run=default_run):
+    """Return the interface carrying an inet address."""
+    _rc, text, _err = run((IFCONFIG,))
+    for iface in parse(text or "").values():
+        if any(addr == address for addr, _prefixlen in iface.inets):
+            return iface
+    return None
 
 
 def parse_addr_list(text):
@@ -218,7 +260,7 @@ def read_interfaces(names, run=default_run):
         query(name)
     for name in names:
         query(name)
-    # foreign members too: the differ needs them present to remove them
+    # read foreign members too as the differ needs them to remove them
     for bridge in list(interfaces.values()):
         for member in bridge.members:
             query(member)

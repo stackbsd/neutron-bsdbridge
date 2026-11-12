@@ -19,6 +19,7 @@ from neutron.api.rpc.handlers import securitygroups_rpc as sg_rpc
 from neutron.common import config as common_config
 from neutron.conf import service as service_config
 from neutron.conf.agent import common as agent_common_config
+from neutron_lib import constants as lib_constants
 from neutron_lib import context as n_context
 from neutron_lib.agent import topics
 from oslo_config import cfg
@@ -26,8 +27,11 @@ from oslo_log import log as logging
 
 from neutron_bsdbridge import config as bsdbridge_config
 from neutron_bsdbridge import constants, ifconfig, names
+from neutron_bsdbridge.l2_agent import plan as plan_mod
 from neutron_bsdbridge.l2_agent import port_config
 from neutron_bsdbridge.l2_agent import reconcile as reconcile_mod
+from neutron_bsdbridge.l2_agent import supervisor as supervisor_mod
+from neutron_bsdbridge.l2_agent import vxlan as vxlan_mod
 from neutron_bsdbridge.l2_agent import writer as writer_mod
 from neutron_bsdbridge.utils import default_run
 
@@ -38,6 +42,63 @@ bsdbridge_config.register()
 # an unresolved candidate retries at loop speed, then on full syncs, then drops
 FAST_RETRY_MISSES = 10
 BINDING_MISS_LIMIT = 60
+
+
+def vxlan_conf(conf, run=default_run):
+    """Return the resolved vxlan settings."""
+    vx = conf.vxlan
+    if not vx.local_ip:
+        return None
+    if ifconfig.owner_of(vx.local_ip, run) is None:
+        raise ValueError(
+            f"vxlan local_ip {vx.local_ip} is not assigned to any interface. "
+            "Assign it to the underlay interface or correct local_ip."
+        )
+    return {
+        "local": str(vx.local_ip),
+        "port": vx.udp_port,
+        "ttl": vx.ttl,
+        "rate": vx.slow_path_rate,
+    }
+
+
+def configurations(conf, vxlan):
+    """Return the configurations the agent reports to the server."""
+    out = {
+        "physical_interface_mappings": dict(conf.bsdbridge.physical_interface_mappings)
+    }
+    if vxlan is not None:
+        out["tunnel_types"] = ["vxlan"]
+        out["tunneling_ip"] = vxlan["local"]
+        out["l2_population"] = True
+    return out
+
+
+def slow_path_ports(run=default_run):
+    """Return the loopback port every existing vxlan interface sends to."""
+    return {
+        iface.vni: iface.vxlan_remote_port
+        for iface in ifconfig.scan_group(constants.OWNED_GROUP, run).values()
+        if iface.vni is not None and iface.vxlan_remote == constants.SLOW_PATH_ADDR
+    }
+
+
+def fdb_tables(ports, local):
+    """Return one VNI's forwarding entries, flood peers and ARP table."""
+    entries = {}
+    peers = set()
+    arp = {}
+    for agent_ip, infos in ports.items():
+        if agent_ip == local:
+            continue
+        for mac, ip in infos:
+            if (mac, ip) == tuple(lib_constants.FLOODING_ENTRY):
+                peers.add(agent_ip)
+                continue
+            entries[mac] = agent_ip
+            if ip and ":" not in ip:
+                arp[ip] = mac
+    return entries, sorted(peers), arp
 
 
 class ReconcileError(Exception):
@@ -62,6 +123,22 @@ class BsdBridgeAgent:
         self._writer = writer or writer_mod.Writer(dry_run=False)
         self._reader = reader
         self._run = run or default_run
+        self._vxlan = vxlan_conf(conf, self._run)
+        self._fdb = {}
+        self._fdb_lock = threading.Lock()
+        self._installed = {}
+        self._fdb_ctl = vxlan_mod
+        self._slow = None
+        if self._vxlan is not None:
+            self._slow = supervisor_mod.SlowPathProcess(
+                self._vxlan["local"],
+                self._vxlan["port"],
+                self._vxlan["rate"],
+                ports=slow_path_ports(self._run),
+                on_restart=self._mark_dirty,
+            )
+        # ask l2pop for every forwarding entry on the first report
+        self._refresh_tunnels = True
         self._dirty = True
         self._failures = 0
         self._devices_up = set()
@@ -73,11 +150,7 @@ class BsdBridgeAgent:
             "availability_zone": conf.AGENT.availability_zone,
             "topic": "N/A",
             "agent_type": constants.AGENT_TYPE_BSDBRIDGE,
-            "configurations": {
-                "physical_interface_mappings": dict(
-                    conf.bsdbridge.physical_interface_mappings
-                ),
-            },
+            "configurations": configurations(conf, self._vxlan),
             "start_flag": True,
         }
 
@@ -176,6 +249,142 @@ class BsdBridgeAgent:
             self._candidates.add(port_id)
         self._dirty = True
 
+    def _mark_dirty(self):
+        """Request a sync."""
+        self._dirty = True
+
+    def add_fdb_entries(self, context, fdb_entries, host=None):
+        """Merge l2pop forwarding entries and mark state dirty."""
+        if host and host != self.host:
+            return
+        with self._fdb_lock:
+            for network_id, body in fdb_entries.items():
+                if network_id == "chg_ip" or body.get("network_type") != "vxlan":
+                    continue
+                net = self._fdb.setdefault(
+                    network_id, {"vni": body["segment_id"], "ports": {}}
+                )
+                for agent_ip, infos in body.get("ports", {}).items():
+                    have = net["ports"].setdefault(agent_ip, set())
+                    have.update(tuple(info) for info in infos)
+        self._dirty = True
+
+    def remove_fdb_entries(self, context, fdb_entries, host=None):
+        """Drop l2pop forwarding entries and mark state dirty."""
+        if host and host != self.host:
+            return
+        with self._fdb_lock:
+            for network_id, body in fdb_entries.items():
+                net = self._fdb.get(network_id)
+                if net is None or network_id == "chg_ip":
+                    continue
+                for agent_ip, infos in body.get("ports", {}).items():
+                    have = net["ports"].get(agent_ip, set())
+                    have.difference_update(tuple(info) for info in infos)
+                    if not have:
+                        net["ports"].pop(agent_ip, None)
+                if not net["ports"]:
+                    del self._fdb[network_id]
+        self._dirty = True
+
+    def update_fdb_entries(self, context, fdb_entries, host=None):
+        """Apply l2pop address changes and mark state dirty."""
+        if host and host != self.host:
+            return
+        with self._fdb_lock:
+            for network_id, agents in fdb_entries.get("chg_ip", {}).items():
+                net = self._fdb.get(network_id)
+                if net is None:
+                    continue
+                for agent_ip, change in agents.items():
+                    have = net["ports"].setdefault(agent_ip, set())
+                    have.difference_update(tuple(i) for i in change.get("before", []))
+                    have.update(tuple(i) for i in change.get("after", []))
+        self._dirty = True
+
+    def _bridge_entries(self, bridge):
+        """Return a bridge's static entries as (mac, member) pairs."""
+        _rc, text, _err = self._run((constants.IFCONFIG, bridge, "addr"))
+        return {
+            (mac, member)
+            for mac, member, static in ifconfig.parse_addr_list(text)
+            if static
+        }
+
+    def _bridge_static(self, bridge, member, mac, add):
+        """Add or remove the static bridge entry steering a MAC to a member."""
+        if add:
+            argv = (constants.IFCONFIG, bridge, "static", member, mac)
+        else:
+            argv = (constants.IFCONFIG, bridge, "deladdr", mac)
+        rc, _out, err = self._run(argv)
+        if rc != 0:
+            raise OSError(f"{' '.join(argv[1:])}: {err.strip()}")
+
+    def _program_vxlan(self, config, the_plan):
+        """Program the forwarding tables and the slow path from l2pop."""
+        with self._fdb_lock:
+            by_vni = {
+                net["vni"]: {ip: set(infos) for ip, infos in net["ports"].items()}
+                for net in self._fdb.values()
+            }
+        recreated = {
+            op.name for op in the_plan.ops if isinstance(op, plan_mod.CreateVxlan)
+        }
+        port = self._vxlan["port"]
+        tables = {}
+        failed = []
+        wanted_ifs = set()
+        for bname, bridge in sorted(config.bridge.items()):
+            if bridge.segment is None or bridge.segment.vxlan is None:
+                continue
+            vni = bridge.segment.vxlan.vni
+            ifname = names.vxlan_if_name(vni)
+            wanted_ifs.add(ifname)
+            wanted, peers, arp = fdb_tables(by_vni.get(vni, {}), self._vxlan["local"])
+            installed = self._installed.get(ifname)
+            try:
+                # start from flushed tables as the kernel cannot list entries
+                if installed is None or ifname in recreated:
+                    self._fdb_ctl.flush(ifname)
+                    for mac, member in sorted(self._bridge_entries(bname)):
+                        if member == ifname:
+                            self._bridge_static(bname, ifname, mac, add=False)
+                    installed = {}
+                stale = sorted(set(installed) - set(wanted))
+                # a MAC that moved to a local port is locked there by now
+                entries = self._bridge_entries(bname) if stale else set()
+                for mac in stale:
+                    self._fdb_ctl.remove_entry(ifname, mac)
+                    if (mac, ifname) in entries:
+                        self._bridge_static(bname, ifname, mac, add=False)
+                    del installed[mac]
+                for mac, ip in sorted(wanted.items()):
+                    if installed.get(mac) != ip:
+                        self._fdb_ctl.add_entry(ifname, mac, ip, port)
+                        self._bridge_static(bname, ifname, mac, add=True)
+                        installed[mac] = ip
+            except OSError as exc:
+                failed.append(f"{ifname}: {exc}")
+                self._installed.pop(ifname, None)
+                continue
+            self._installed[ifname] = installed
+            local = sorted(
+                {
+                    m.bind.address
+                    for m in bridge.member.values()
+                    if m.bind and m.bind.address
+                }
+            )
+            tables[vni] = (peers, arp, local)
+        for ifname in set(self._installed) - wanted_ifs:
+            del self._installed[ifname]
+        self._slow.update(tables)
+        if failed:
+            raise ReconcileError(
+                "%d forwarding table(s) failed, first: %s" % (len(failed), failed[0])
+            )
+
     def _sync(self):
         """Fetch, build, reconcile, and report one pass."""
         self._candidates |= self._devices_from_service_ifs()
@@ -218,9 +427,23 @@ class BsdBridgeAgent:
                 self.context, devices=our_devices
             )
 
+        # the uplink of a vxlan network sends to its slow path socket
+        slow_ports = None
+        if self._vxlan is not None:
+            vnis = {
+                d["segmentation_id"]
+                for d in details
+                if d.get("network_type") == "vxlan"
+            }
+            slow_ports = self._slow.ports_for(sorted(vnis))
+
         # build and reconcile
         config, rendered_devices = port_config.build(
-            details, sg_info, self.conf.bsdbridge.physical_interface_mappings
+            details,
+            sg_info,
+            self.conf.bsdbridge.physical_interface_mappings,
+            self._vxlan,
+            slow_ports,
         )
         result = reconcile_mod.reconcile(
             config, writer=self._writer, reader=self._reader, run=self._run
@@ -239,6 +462,9 @@ class BsdBridgeAgent:
             raise ReconcileError(
                 "%d op(s) failed, first: %s" % (len(result.failed), result.failed[0])
             )
+
+        if self._vxlan is not None:
+            self._program_vxlan(config, result.plan)
 
         self._save_devices(our_devices)
 
@@ -265,8 +491,14 @@ class BsdBridgeAgent:
         # a port back to BUILD each time details are fetched
         if now_up or down:
             self.plugin_rpc.update_device_list(
-                self.context, sorted(now_up), down, self.agent_id, self.host
+                self.context,
+                sorted(now_up),
+                down,
+                self.agent_id,
+                self.host,
+                refresh_tunnels=self._refresh_tunnels,
             )
+            self._refresh_tunnels = False
         self._devices_up = now_up
 
         # keep candidates that arrived while the RPC calls above yielded,
@@ -330,6 +562,10 @@ class BsdBridgeAgent:
     def _report_state(self):
         """Send the agent state report to the server."""
         try:
+            if self._slow is not None:
+                self.agent_state["configurations"]["vxlan_slow_path"] = (
+                    self._slow.stats()
+                )
             self.state_rpc.report_state(self.context, self.agent_state)
             self.agent_state.pop("start_flag", None)
         except Exception:
@@ -347,6 +583,8 @@ class BsdBridgeAgent:
         threading.Thread(target=report_loop, daemon=True).start()
         if self.conf.bsdbridge.devd_pipe:
             threading.Thread(target=self._devd_loop, daemon=True).start()
+        if self._slow is not None:
+            threading.Thread(target=self._slow.run, daemon=True).start()
 
         consumers = [
             [topics.PORT, topics.UPDATE],
@@ -356,15 +594,18 @@ class BsdBridgeAgent:
             [topics.PORT_BINDING, topics.DEACTIVATE],
             [topics.PORT_BINDING, topics.ACTIVATE],
         ]
+        if self._vxlan is not None:
+            consumers.append([topics.L2POPULATION, topics.UPDATE, self.host])
         self.connection = agent_rpc.create_consumers(
             [self], topics.AGENT, consumers, start_listening=True
         )
 
         LOG.info(
-            "started on %s (%d recovered device(s), mappings %s)",
+            "started on %s (%d recovered device(s), mappings %s, vxlan %s)",
             self.host,
             len(self._candidates),
             dict(self.conf.bsdbridge.physical_interface_mappings),
+            self._vxlan or "disabled",
         )
         interval = self.conf.bsdbridge.sync_interval
         last_full = 0.0

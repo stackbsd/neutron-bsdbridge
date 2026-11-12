@@ -5,6 +5,7 @@ import uuid
 
 BRIDGE_PREFIX = "pb"
 BRIDGE_HASH_LEN = 12
+VXLAN_PREFIX = "vx"
 
 
 def bridge_name(network_type, physical_network, segmentation_id, network_id):
@@ -13,10 +14,18 @@ def bridge_name(network_type, physical_network, segmentation_id, network_id):
         key = f"vlan/{physical_network}/{segmentation_id}"
     elif network_type == "flat":
         key = f"flat/{physical_network}"
+    elif network_type == "vxlan":
+        key = f"vxlan/{segmentation_id}"
     else:  # local
         key = f"{network_type}/{segmentation_id or network_id}"
     digest = hashlib.sha256(key.encode()).hexdigest()
     return BRIDGE_PREFIX + digest[:BRIDGE_HASH_LEN]
+
+
+def vxlan_if_name(vni):
+    """Return the name of a VNI's vxlan interface."""
+    digest = hashlib.sha256(f"vxlan/{vni}".encode()).hexdigest()
+    return VXLAN_PREFIX + digest[:BRIDGE_HASH_LEN]
 
 
 def tap_name(port_id):

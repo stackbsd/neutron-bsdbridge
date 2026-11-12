@@ -9,7 +9,7 @@ DHCP_AGENT_BINARY = "neutron-bsdbridge-dhcp-agent"
 AGENT_TYPE_L3 = "L3 agent"
 L3_AGENT_BINARY = "neutron-bsdbridge-l3-agent"
 
-SUPPORTED_NETWORK_TYPES = ("local", "flat", "vlan")
+SUPPORTED_NETWORK_TYPES = ("local", "flat", "vlan", "vxlan")
 
 # the kernel refuses group names ending in a digit
 OWNED_GROUP = "l2-neutron"
@@ -17,6 +17,10 @@ DHCP_GROUP = "dhcp-neutron"
 L3_GROUP = "l3-neutron"
 SERVICE_GROUPS = (DHCP_GROUP, L3_GROUP)
 DHCP_JAIL_IF = "dhcp0"
+
+VXLAN_PORT = 4789
+VXLAN_TTL = 64
+SLOW_PATH_ADDR = "127.0.0.1"
 
 DESCRIPTION_PREFIX = "neutron port "
 DEVICE_OWNER_DHCP = "network:dhcp"

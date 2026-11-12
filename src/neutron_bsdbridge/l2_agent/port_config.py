@@ -46,7 +46,7 @@ def link_local(mac):
 
 
 def port_value(rule):
-    """Return an SG rule's port as an int, a range string, or None."""
+    """Return an SG rule's port or port range."""
     lo, hi = rule.get("port_range_min"), rule.get("port_range_max")
     if lo is None:
         return None
@@ -142,7 +142,7 @@ def infra_rules():
     return tuple(tables)
 
 
-def build(ports, sg_info, interface_mappings):
+def build(ports, sg_info, interface_mappings, vxlan_conf=None, slow_ports=None):
     """Build a validated Config plus the sorted port uuids it covers."""
     member_ips = (sg_info or {}).get("sg_member_ips", {})
 
@@ -167,7 +167,34 @@ def build(ports, sg_info, interface_mappings):
 
         # local networks get an isolated bridge
         stanza = bridges.setdefault(bridge, {"member": {}})
-        if port.get("network_type") in ("vlan", "flat"):
+        mtu = port.get("mtu") or None
+        if port.get("network_type") == "vxlan":
+            vni = port["segmentation_id"]
+            remote_port = (slow_ports or {}).get(vni)
+            if vxlan_conf is None:
+                LOG.warning(
+                    "vxlan is not configured; port %s renders without its uplink",
+                    port["port_id"],
+                )
+            elif remote_port is None:
+                LOG.warning(
+                    "no slow path socket for vni %s; port %s renders without "
+                    "its uplink",
+                    vni,
+                    port["port_id"],
+                )
+            else:
+                segment = {
+                    "vni": vni,
+                    "local": vxlan_conf["local"],
+                    "port": vxlan_conf["port"],
+                    "remote_port": remote_port,
+                    "ttl": vxlan_conf["ttl"],
+                }
+                if mtu:
+                    segment["mtu"] = mtu
+                stanza["segment"] = {"vxlan": segment}
+        elif port.get("network_type") in ("vlan", "flat"):
             physical_network = port.get("physical_network")
             trunk = interface_mappings.get(physical_network)
             if trunk is None:
@@ -184,8 +211,10 @@ def build(ports, sg_info, interface_mappings):
                     segment["vlan"] = port["segmentation_id"]
                 stanza["segment"] = segment
 
-        # member: a service epair is attached hardware with no policy
+        # a service epair is attached hardware with no policy
         member = {"description": constants.DESCRIPTION_PREFIX + port["port_id"]}
+        if mtu:
+            member["mtu"] = mtu
         if service_if is not None:
             pass
         elif port.get("port_security_enabled", True) is False:

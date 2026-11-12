@@ -60,7 +60,7 @@ def tcp_probe(port, timeout=2.0):
 
 
 def cfg(filter_rules):
-    """Build the rig Config: one bridge, a filtered+bound member, a plain one."""
+    """Build the rig Config."""
     return model.Config.from_tree(
         {
             "filter": {"rigf": filter_rules},

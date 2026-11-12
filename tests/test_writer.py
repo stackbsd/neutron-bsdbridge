@@ -1,4 +1,4 @@
-"""Writer tests: argv emission, the destroy guard, and parking."""
+"""Writer tests."""
 
 import os
 import sys
@@ -55,10 +55,85 @@ class ArgvTestCase(unittest.TestCase):
             argv,
         )
 
+    def test_create_vxlan_renders_every_keyword_in_order(self):
+        """CreateVxlan creates the interface in one call."""
+        argv = writer.argv_for(
+            plan.CreateVxlan(
+                name="vx1f5a50665c03",
+                vni=5042,
+                local="10.255.0.11",
+                port=4789,
+                remote_port=61234,
+                ttl=64,
+                mtu=1450,
+            )
+        )
+        self.assertEqual(
+            (
+                "/sbin/ifconfig",
+                "vxlan",
+                "create",
+                "vxlanid",
+                "5042",
+                "vxlanlocal",
+                "10.255.0.11",
+                "vxlanremote",
+                "127.0.0.1",
+                "vxlanlocalport",
+                "4789",
+                "vxlanremoteport",
+                "61234",
+                "vxlanttl",
+                "64",
+                "-vxlanlearn",
+                "mtu",
+                "1450",
+                "name",
+                "vx1f5a50665c03",
+                "descr",
+                "segment realization: vxlan 5042",
+                "group",
+                "l2-neutron",
+                "up",
+            ),
+            argv,
+        )
+
+    def test_clear_discover_renders_the_member_flag(self):
+        """ClearDiscover clears discover on one member."""
+        argv = writer.argv_for(plan.ClearDiscover(bridge="net42", member="vx0"))
+        self.assertEqual(("/sbin/ifconfig", "net42", "-discover", "vx0"), argv)
+
     def test_create_tap_without_description_omits_descr(self):
         """CreateTap leaves descr out of the argv when the description is empty."""
         argv = writer.argv_for(plan.CreateTap(name="tapx", description=""))
         self.assertNotIn("descr", argv)
+
+    def test_create_tap_with_mtu_sets_it_before_the_group(self):
+        """CreateTap sets the mtu before the group."""
+        argv = writer.argv_for(plan.CreateTap(name="tapx", description="d", mtu=1450))
+        self.assertEqual(
+            (
+                "/sbin/ifconfig",
+                "tap",
+                "create",
+                "name",
+                "tapx",
+                "descr",
+                "d",
+                "mtu",
+                "1450",
+                "group",
+                "l2-neutron",
+                "up",
+            ),
+            argv,
+        )
+
+    def test_create_tap_without_mtu_omits_it(self):
+        """CreateTap leaves mtu out of the argv when it is unset."""
+        argv = writer.argv_for(plan.CreateTap(name="tapx", description="d"))
+        self.assertNotIn("mtu", argv)
 
     def test_load_anchor_feeds_pfctl_stdin(self):
         """LoadAnchor maps to pfctl -f - so the ruleset arrives on stdin."""
@@ -112,7 +187,7 @@ class ArgvTestCase(unittest.TestCase):
 
 
 class FakeRunner:
-    """Scripted kernel: records argv, serves canned responses."""
+    """Scripted kernel that records argv and serves canned responses."""
 
     def __init__(self, iface_text=None, fail=(), hang=()):
         """Configure canned interface text and the failing or hanging targets."""

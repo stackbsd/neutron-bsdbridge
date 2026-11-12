@@ -39,8 +39,26 @@ class NamesTestCase(unittest.TestCase):
             ),
         )
 
+    def test_vxlan_bridge_name_is_unchanged_by_the_explicit_case(self):
+        self.assertEqual(
+            "pb1f5a50665c03", names.bridge_name("vxlan", None, 5042, "net-a")
+        )
+        self.assertEqual(
+            names.bridge_name("vxlan", None, 5042, "net-a"),
+            names.bridge_name("vxlan", None, 5042, "net-b"),
+        )
+
     def test_tap_name_is_the_shared_convention(self):
         self.assertEqual("tap3fb01977-a4", names.tap_name("3fb01977-a4e2-4a28-9a6f-x"))
+
+
+class VxlanNamesTestCase(unittest.TestCase):
+    def test_vxlan_if_name_is_stable_and_fits_ifnamsiz(self):
+        name = names.vxlan_if_name(5042)
+        self.assertEqual(14, len(name))
+        self.assertTrue(name.startswith("vx"))
+        self.assertEqual(name, names.vxlan_if_name(5042))
+        self.assertNotEqual(name, names.vxlan_if_name(5043))
 
 
 class DhcpNamesTestCase(unittest.TestCase):

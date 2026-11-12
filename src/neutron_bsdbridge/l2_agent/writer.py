@@ -1,7 +1,7 @@
 """Writer to apply the plan to the running kernel."""
 
 from neutron_bsdbridge import ifconfig
-from neutron_bsdbridge.constants import IFCONFIG, OWNED_GROUP, PFCTL
+from neutron_bsdbridge.constants import IFCONFIG, OWNED_GROUP, PFCTL, SLOW_PATH_ADDR
 from neutron_bsdbridge.l2_agent import plan as plan_mod
 from neutron_bsdbridge.l2_agent.pf import anchor_name
 from neutron_bsdbridge.l2_agent.pf import kill_port_states as pf_state_kill
@@ -43,7 +43,7 @@ def argv_for(op):
             "up",
         )
     if t is plan_mod.CreateVxlan:
-        return (
+        argv = [
             IFCONFIG,
             "vxlan",
             "create",
@@ -52,21 +52,39 @@ def argv_for(op):
             "vxlanlocal",
             op.local,
             "vxlanremote",
-            op.peer,
+            SLOW_PATH_ADDR,
+            "vxlanlocalport",
+            str(op.port),
+            "vxlanremoteport",
+            str(op.remote_port),
+            "vxlanttl",
+            str(op.ttl),
+            "-vxlanlearn",
+        ]
+        if op.mtu:
+            argv += ["mtu", str(op.mtu)]
+        argv += [
             "name",
             op.name,
+            "descr",
+            f"segment realization: vxlan {op.vni}",
             "group",
             OWNED_GROUP,
             "up",
-        )
+        ]
+        return tuple(argv)
     if t is plan_mod.CreateTap:
         argv = [IFCONFIG, "tap", "create", "name", op.name]
         if op.description:
             argv += ["descr", op.description]
+        if op.mtu:
+            argv += ["mtu", str(op.mtu)]
         argv += ["group", OWNED_GROUP, "up"]
         return tuple(argv)
     if t is plan_mod.AddMember:
         return (IFCONFIG, op.bridge, "addm", op.member)
+    if t is plan_mod.ClearDiscover:
+        return (IFCONFIG, op.bridge, "-discover", op.member)
     if t is plan_mod.RemoveMember:
         return (IFCONFIG, op.bridge, "deletem", op.member)
     if t is plan_mod.SetMaxaddr:
@@ -97,7 +115,7 @@ class Writer:
         self._run = run
 
     def _owned_by_kernel(self, name):
-        """Return whether the kernel marks an interface owned, or None if absent."""
+        """Return whether the kernel marks an interface owned."""
         rc, out, _err = self._run((IFCONFIG, name))
         if rc != 0:
             return None

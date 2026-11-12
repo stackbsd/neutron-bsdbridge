@@ -1,5 +1,6 @@
 """dhcp reconcile tests against a scripted, stateful fake kernel."""
 
+import dataclasses
 import os
 import sys
 import tempfile
@@ -115,8 +116,21 @@ class ReconcileTestCase(unittest.TestCase):
         )
         self.assertTrue(self.kernel.dnsmasq_running)
 
+    def test_epair_carries_the_network_mtu_on_both_ends(self):
+        """Both epair ends are set to the network mtu before the L2 agent adds it."""
+        net = dataclasses.replace(NET, mtu=1450)
+        result = self._reconcile([net])
+        self.assertEqual([], result.failed, [str(r) for r in result.failed])
+        self.assertEqual(1450, self.kernel.host_ifaces[net.dhcp_if]["mtu"])
+        self.assertEqual(1450, self.kernel.jail_ifaces[(net.jail, "dhcp0")]["mtu"])
+
+    def test_unknown_mtu_leaves_the_epair_default(self):
+        """An epair for a network without an mtu is created without one."""
+        self._reconcile([NET])
+        self.assertNotIn("mtu", self.kernel.host_ifaces[NET.dhcp_if])
+
     def test_second_reconcile_does_nothing(self):
-        """The contract: reconcile twice, the second pass is empty."""
+        """A second reconcile does nothing."""
         self._reconcile([NET])
         again = self._reconcile([NET])
         self.assertEqual([], [str(r) for r in again.receipts])
@@ -203,7 +217,7 @@ class ReconcileTestCase(unittest.TestCase):
 
 
 class EpairDescriptionTestCase(unittest.TestCase):
-    """The epair description is the L2 discovery channel: healed on drift."""
+    """The epair description the L2 agent discovers ports by."""
 
     def setUp(self):
         """Fresh kernel and state dir."""
