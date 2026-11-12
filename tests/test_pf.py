@@ -413,6 +413,28 @@ class FamilyTestCase(unittest.TestCase):
         self.assertIn("inet6 proto icmp6", text)
         self.assertNotIn("inet proto icmp6", text)
 
+    def test_family_renders_without_a_protocol(self):
+        """A rule for every protocol of one family names only the family."""
+        f = make_filter(**{"out": {"10": {"action": "pass", "family": "inet6"}}})
+        text, _ = pf.render("tap0", f)
+        self.assertIn("pass in quick on tap0 inet6 all keep state", text)
+
+    def test_ipv6_tcp_renders_inet6(self):
+        """A tcp rule with the inet6 family is not forced to inet."""
+        rule = {"action": "pass", "family": "inet6", "proto": "tcp", "port": 22}
+        text, _ = pf.render("tap0", make_filter(**{"in": {"10": rule}}))
+        self.assertIn("inet6 proto tcp from any to any port 22", text)
+
+    def test_icmp_type_and_code_render(self):
+        """An icmp rule renders its type and code in the protocol's spelling."""
+        rules = {
+            "10": {"action": "pass", "proto": "icmp", "icmp-type": 3, "icmp-code": 4},
+            "20": {"action": "pass", "proto": "icmp6", "icmp-type": 135},
+        }
+        text, _ = pf.render("tap0", make_filter(**{"in": rules}))
+        self.assertIn("inet proto icmp from any to any icmp-type 3 code 4", text)
+        self.assertIn("inet6 proto icmp6 from any to any icmp6-type 135", text)
+
 
 class StateLabelTestCase(unittest.TestCase):
     """State labels on rendered rules."""

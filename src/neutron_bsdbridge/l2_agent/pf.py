@@ -38,10 +38,14 @@ def render_rule(ifname, direction, rule):
         ifname,
     ]
     body = []
-    if rule.proto:
+    family = rule.family
+    if family is None and rule.proto:
         # pf refuses a family/proto mismatch and fails the whole anchor load
         family = "inet6" if rule.proto == "icmp6" else "inet"
-        body += [family, "proto", rule.proto]
+    if family:
+        body.append(family)
+    if rule.proto:
+        body += ["proto", rule.proto]
     src = rule.from_
     dst = rule.to
     if src.startswith("@"):
@@ -53,6 +57,10 @@ def render_rule(ifname, direction, rule):
         if rule.port:
             # pf spells ranges with a colon
             body += ["port", str(rule.port).replace("-", ":")]
+        if rule.icmp_type is not None:
+            body += [f"{rule.proto}-type", str(rule.icmp_type)]
+            if rule.icmp_code is not None:
+                body += ["code", str(rule.icmp_code)]
     else:
         body += ["all"]
     parts += body

@@ -16,6 +16,12 @@ PROTO = {
     "icmp6": "icmp6",
 }
 
+FAMILY = {"IPv4": "inet", "IPv6": "inet6"}
+
+# what a workload needs from its link whatever its security groups say
+ICMP6_IN = (130, 134, 135, 136)
+ICMP6_OUT = (131, 132, 133, 135, 136, 143)
+
 # the sg rpc renames remote_ip_prefix by direction
 PREFIX_KEY = {"ingress": "source_ip_prefix", "egress": "dest_ip_prefix"}
 
@@ -72,19 +78,24 @@ def sg_rules_for_port(port, sg_info, tables_used):
                 port["port_id"],
             )
             continue
-        if rule.get("ethertype") == "IPv6" and PROTO.get(proto) not in (None, "icmp6"):
-            LOG.warning(
-                "cannot express IPv6 %s rule on port %s; traffic stays blocked",
-                proto,
-                port["port_id"],
-            )
-            continue
         body = {"action": "pass"}
+        family = FAMILY.get(rule.get("ethertype"))
+        if family is not None:
+            body["family"] = family
         if proto is not None:
             body["proto"] = PROTO[proto]
-        port_spec = port_value(rule)
-        if port_spec is not None:
-            body["port"] = port_spec
+            if family == "inet6" and body["proto"] == "icmp":
+                body["proto"] = "icmp6"
+        if body.get("proto") in ("icmp", "icmp6"):
+            # the sg api carries the icmp type and code in the port range
+            if rule.get("port_range_min") is not None:
+                body["icmp-type"] = int(rule["port_range_min"])
+                if rule.get("port_range_max") is not None:
+                    body["icmp-code"] = int(rule["port_range_max"])
+        else:
+            port_spec = port_value(rule)
+            if port_spec is not None:
+                body["port"] = port_spec
         remote_ref = remote(rule, tables_used)
         if direction == "in":
             if remote_ref != "any":
@@ -107,17 +118,19 @@ def sg_rules_for_port(port, sg_info, tables_used):
 
 
 def infra_rules():
-    """Return the per-port allowances for DHCP client traffic and ICMPv6."""
-    return (
-        {
-            "10": {"action": "pass", "proto": "udp", "port": 68},
-            "20": {"action": "pass", "proto": "icmp6"},
-        },
-        {
-            "10": {"action": "pass", "proto": "udp", "port": 67},
-            "20": {"action": "pass", "proto": "icmp6"},
-        },
-    )
+    """Return the per-port allowances for DHCP clients and neighbor discovery."""
+    tables = []
+    for ports, types in (((68, 546), ICMP6_IN), ((67, 547), ICMP6_OUT)):
+        bodies = [
+            {"action": "pass", "family": "inet", "proto": "udp", "port": ports[0]},
+            {"action": "pass", "family": "inet6", "proto": "udp", "port": ports[1]},
+        ]
+        bodies += [
+            {"action": "pass", "proto": "icmp6", "icmp-type": icmp_type}
+            for icmp_type in types
+        ]
+        tables.append({str(10 * (i + 1)): body for i, body in enumerate(bodies)})
+    return tuple(tables)
 
 
 def build(ports, sg_info, interface_mappings):
@@ -189,7 +202,8 @@ def build(ports, sg_info, interface_mappings):
 
     tables = {}
     for sg_id in sorted(tables_used):
-        ips = [entry[0] for entry in (member_ips.get(sg_id, {}).get("IPv4", []))]
+        families = member_ips.get(sg_id, {})
+        ips = [e[0] for family in ("IPv4", "IPv6") for e in families.get(family, [])]
         tables[names.table_name(sg_id)] = {"members": sorted(ips)}
 
     tree = {}
