@@ -3,7 +3,7 @@
 import dataclasses
 
 from neutron_bsdbridge import names as names_mod
-from neutron_bsdbridge.constants import SLOW_PATH_ADDR
+from neutron_bsdbridge.constants import RELAY_ADDR
 from neutron_bsdbridge.l2_agent import model, pf
 
 
@@ -207,7 +207,7 @@ def uplink_creates(bname, seg, names, kernel):
             drifted = (
                 iface.vni != vx.vni
                 or iface.vxlan_local != vx.local
-                or iface.vxlan_remote != SLOW_PATH_ADDR
+                or iface.vxlan_remote != RELAY_ADDR
                 or iface.vxlan_port != vx.port
                 or iface.vxlan_remote_port != vx.remote_port
             )
@@ -365,7 +365,7 @@ def diff(config, kernel, pf_state=None):
             seg.vlan is not None or seg.vxlan is not None
         )
         if seg is not None and seg.vxlan is not None:
-            # keeps tenant broadcast and multicast from reaching the slow path
+            # keeps tenant broadcast and multicast from reaching the relay
             text, cfg_hash = pf.render_vxlan(names[0])
             state = pf_state.get(names[0]) if pf_state is not None else None
             stale = pf_state is not None and (
@@ -384,7 +384,7 @@ def diff(config, kernel, pf_state=None):
                 plan.adds.append(AddMember(bridge=bname, member=name))
             else:
                 plan.notes.append(f"{name}: awaiting-attach ({bname})")
-        # unknown unicast must not reach the slow path through the uplink
+        # unknown unicast must not reach the relay through the uplink
         if seg is not None and seg.vxlan is not None:
             name = names[0]
             if name not in current or "DISCOVER" in kernel.member_flags(bname, name):
