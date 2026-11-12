@@ -1,0 +1,10 @@
+qr-44715559-18: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=200019<RXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6>
+	ether fa:16:3e:30:14:c5
+	hwaddr 58:9c:fc:10:7c:9b
+	inet6 2001:db8:a:: prefixlen 64
+	inet6 fe80::f816:3eff:fe30:14c5%qr-44715559-18 prefixlen 64 scopeid 0x21
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=21<PERFORMNUD,AUTO_LINKLOCAL>

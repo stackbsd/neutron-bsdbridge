@@ -11,7 +11,7 @@ LEASE_TIME = "86400s"
 
 @dataclasses.dataclass(frozen=True)
 class Subnet:
-    """One dhcp-enabled IPv4 subnet."""
+    """One subnet dnsmasq serves."""
 
     id: str
     cidr: str
@@ -56,10 +56,11 @@ def state_dir(base, network_id):
 
 def hosts_text(net):
     """Render the dhcp-hostsfile, one reservation per line."""
-    lines = [
-        f"{entry.mac},host-{entry.ip.replace('.', '-')},{entry.ip}"
-        for entry in net.hosts
-    ]
+    lines = []
+    for entry in net.hosts:
+        name = "host-" + entry.ip.replace(".", "-").replace(":", "-")
+        address = f"[{entry.ip}]" if ":" in entry.ip else entry.ip
+        lines.append(f"{entry.mac},{name},{address}")
     return "".join(line + "\n" for line in sorted(lines))
 
 
@@ -68,6 +69,11 @@ def opts_text(net):
     # an option with no value makes dnsmasq send nothing instead of itself
     lines = []
     for subnet in net.subnets:
+        if ":" in subnet.cidr:
+            if subnet.dns:
+                servers = ",".join(f"[{server}]" for server in subnet.dns)
+                lines.append(f"tag:{subnet.id},option6:dns-server,{servers}")
+            continue
         if subnet.gateway_ip:
             lines.append(f"tag:{subnet.id},option:router,{subnet.gateway_ip}")
         else:
@@ -98,8 +104,9 @@ def argv(net, base, dnsmasq_path=constants.DNSMASQ):
     ]
     for subnet in net.subnets:
         network = ipaddress.ip_network(subnet.cidr)
+        size = network.prefixlen if network.version == 6 else network.netmask
         parts.append(
             f"--dhcp-range=set:{subnet.id},{network.network_address},"
-            f"static,{network.netmask},{LEASE_TIME}"
+            f"static,{size},{LEASE_TIME}"
         )
     return tuple(parts)

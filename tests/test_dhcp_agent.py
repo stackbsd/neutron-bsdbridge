@@ -209,9 +209,69 @@ class SyncTestCase(unittest.TestCase):
             1, len(a.plugin_rpc.ready), "already-ready ports are not re-reported"
         )
 
-    def test_ipv6_only_subnets_mean_no_service(self):
-        v6 = subnet(id="v6sub", ip_version=6, cidr="fd00::/64")
-        a = make_agent([network(subnets=[v6])])
+    def test_slaac_only_network_runs_no_dnsmasq_but_reports_ready(self):
+        v6 = subnet(
+            id="v6sub",
+            ip_version=6,
+            cidr="fd00::/64",
+            ipv6_ra_mode="slaac",
+            ipv6_address_mode="slaac",
+        )
+        vm = vm_port(fixed_ips=[{"subnet_id": "v6sub", "ip_address": "fd00::5"}])
+        a = make_agent([network(subnets=[v6], ports=[vm])])
         a._sync()
         self.assertEqual([], a.plugin_rpc.created)
         self.assertEqual([[]], a._reconcile.calls)
+        self.assertEqual([[vm["id"]]], a.plugin_rpc.ready)
+
+    def test_stateful_subnet_is_served_with_reservations(self):
+        v6 = subnet(
+            id="v6sub",
+            ip_version=6,
+            cidr="fd00::/64",
+            ipv6_ra_mode="dhcpv6-stateful",
+            ipv6_address_mode="dhcpv6-stateful",
+        )
+        vm = vm_port(fixed_ips=[{"subnet_id": "v6sub", "ip_address": "fd00::5"}])
+        own = dhcp_port(fixed_ips=[{"subnet_id": "v6sub", "ip_address": "fd00::2"}])
+        a = make_agent([network(subnets=[v6], ports=[own, vm])])
+        a._sync()
+        (spec,) = a._reconcile.calls[0]
+        self.assertEqual((("fd00::2", 64),), spec.ips)
+        self.assertEqual(["fd00::5"], [h.ip for h in spec.hosts])
+
+    def test_stateless_subnet_is_served_without_reservations(self):
+        v6 = subnet(
+            id="v6sub",
+            ip_version=6,
+            cidr="fd00::/64",
+            ipv6_ra_mode="dhcpv6-stateless",
+            ipv6_address_mode="dhcpv6-stateless",
+        )
+        vm = vm_port(fixed_ips=[{"subnet_id": "v6sub", "ip_address": "fd00::5"}])
+        own = dhcp_port(fixed_ips=[{"subnet_id": "v6sub", "ip_address": "fd00::2"}])
+        a = make_agent([network(subnets=[v6], ports=[own, vm])])
+        a._sync()
+        (spec,) = a._reconcile.calls[0]
+        self.assertEqual(["fd00::/64"], [s.cidr for s in spec.subnets])
+        self.assertEqual((), spec.hosts)
+
+    def test_slaac_address_on_the_dhcp_port_is_not_refitted(self):
+        slaac = subnet(
+            id="v6sub",
+            ip_version=6,
+            cidr="fd00::/64",
+            ipv6_ra_mode="slaac",
+            ipv6_address_mode="slaac",
+        )
+        own = dhcp_port(
+            fixed_ips=[
+                {"subnet_id": SUBNET_ID, "ip_address": "10.99.0.2"},
+                {"subnet_id": "v6sub", "ip_address": "fd00::f816:3eff:fe00:1"},
+            ]
+        )
+        a = make_agent([network(subnets=[subnet(), slaac], ports=[own])])
+        a._sync()
+        self.assertEqual([], a.plugin_rpc.updated)
+        (spec,) = a._reconcile.calls[0]
+        self.assertEqual((("10.99.0.2", 24),), spec.ips)

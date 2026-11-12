@@ -28,6 +28,42 @@ NET = dnsmasq.DhcpNetwork(
 )
 
 
+V6_ID = "6f1e0d7c-2b3a-4c5d-8e9f-0a1b2c3d4e5f"
+NET6 = dnsmasq.DhcpNetwork(
+    network_id=NET.network_id,
+    port_id=NET.port_id,
+    mac=NET.mac,
+    ips=(("2001:db8::2", 64),),
+    subnets=(dnsmasq.Subnet(id=V6_ID, cidr="2001:db8::/64", dns=("2001:db8::53",)),),
+    hosts=(dnsmasq.HostEntry(mac="fa:16:3e:aa:bb:01", ip="2001:db8::5"),),
+)
+
+
+class Ipv6TestCase(unittest.TestCase):
+    """The IPv6 forms of the hosts file, options file and range."""
+
+    def test_reservation_brackets_the_address(self):
+        """An IPv6 reservation renders its address in brackets."""
+        self.assertEqual(
+            "fa:16:3e:aa:bb:01,host-2001-db8--5,[2001:db8::5]\n",
+            dnsmasq.hosts_text(NET6),
+        )
+
+    def test_dns_is_a_dhcpv6_option(self):
+        """An IPv6 subnet sends dns as option6 and no router option."""
+        self.assertEqual(
+            f"tag:{V6_ID},option6:dns-server,[2001:db8::53]\n",
+            dnsmasq.opts_text(NET6),
+        )
+
+    def test_range_uses_the_prefix_length(self):
+        """An IPv6 range is static with the prefix length as its size."""
+        self.assertIn(
+            f"--dhcp-range=set:{V6_ID},2001:db8::,static,64,86400s",
+            dnsmasq.argv(NET6, "/var/db/x"),
+        )
+
+
 class HostsTestCase(unittest.TestCase):
     """The dhcp-hostsfile rendering."""
 
