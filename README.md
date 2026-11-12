@@ -19,14 +19,14 @@ Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD base
 
 - metadata agent
 - HA routers (CARP+pfsync)
+- prevent ARP spoofing in port security
 
 ### Limitations
 
-- ARP is not inspected
+- Distributed routers are unlikely to ever be supported
+- Tenant vxlan networks do not forward application broadcast or multicast traffic - only ARP, DHCP and IPv6 neighbour discovery is relayed
 - A port with port security sends IPv6 only from its fixed addresses and the link-local address derived from its MAC
 - A router takes its IPv6 default route from the gateway of the external subnet, not from router advertisements
-- Distributed routers probably won't be supported
-- On vxlan networks only ARP, DHCP and IPv6 neighbour discovery reach other hosts, through the L2 agent, so they pause while it restarts; other broadcast and multicast stays on the sending host
 
 ## Host requirements
 
@@ -40,16 +40,11 @@ ether anchor "l2-neutron/port/*"
 anchor "l2-neutron/port/*"
 ```
 
-For vxlan networks, also pass the vxlan port on the underlay interface, pass the loopback traffic the L2 agent handles ARP and DHCP with (unless `lo0` is skipped), and keep other broadcast and multicast off the overlay:
+For vxlan networks, port 4789 must be open on the host underlay interface (the one assigned `[vxlan] local_ip` in the config) and allow loopback traffic for the relay service:
 
 ```
 pass on vtnet0 proto udp to port 4789
 pass on lo0 proto udp to 127.0.0.1
-pass out quick on vxlan inet proto udp from port 68 to 255.255.255.255 port 67 no state
-pass out quick on vxlan inet proto udp from port 67 to 255.255.255.255 port 68 no state
-block out quick on vxlan inet to { 224.0.0.0/4, 255.255.255.255 }
-pass out quick on vxlan inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv, routersol, routeradv } no state
-block out quick on vxlan inet6 to ff00::/8
 ```
 
 ## Configuration
@@ -125,6 +120,6 @@ Note that the MTU in a vxlan neutron network is 1450. If you need a 1500 MTU ins
 
 ## IPv6
 
-Tenant IPv6 subnets are routed without translation, so there is no SNAT and no floating IPs for IPv6.
+In OpenStack tenant IPv6 subnets are routed without translation and there is no support for SNAT or floating IPs for IPv6.
 
 The external network has to route tenant prefixes to the router, either with static routes or with BGP using `neutron-dynamic-routing`.
