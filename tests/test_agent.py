@@ -416,6 +416,20 @@ class L2popTestCase(unittest.TestCase):
         )
         self.assertTrue(a._dirty)
 
+    def test_only_a_changed_table_marks_state_dirty(self):
+        a = vxlan_agent(self.tmp.name)
+        a.add_fdb_entries(None, fdb({"192.0.2.2": [FLOOD, VM_B]}))
+        self.assertTrue(a._dirty)
+        a._dirty = False
+        a.add_fdb_entries(None, fdb({"192.0.2.2": [FLOOD, VM_B]}))
+        a.remove_fdb_entries(None, fdb({"192.0.2.3": [VM_C]}))
+        a.update_fdb_entries(
+            None, {"chg_ip": {NET: {"192.0.2.2": {"before": [VM_C], "after": [VM_B]}}}}
+        )
+        self.assertFalse(a._dirty)
+        a.remove_fdb_entries(None, fdb({"192.0.2.2": [VM_B]}))
+        self.assertTrue(a._dirty)
+
     def test_other_network_types_and_hosts_are_ignored(self):
         a = vxlan_agent(self.tmp.name)
         a.add_fdb_entries(None, fdb({"192.0.2.2": [FLOOD]}, network_type="vlan"))

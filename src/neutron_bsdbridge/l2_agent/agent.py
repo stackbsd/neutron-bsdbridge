@@ -6,6 +6,8 @@ import eventlet
 
 eventlet.monkey_patch()
 
+import contextlib
+import copy
 import json
 import os
 import socket
@@ -248,11 +250,21 @@ class BsdBridgeAgent:
             self._candidates.add(port_id)
         self._dirty = True
 
+    @contextlib.contextmanager
+    def _fdb_edit(self):
+        """Lock the l2pop table and mark state dirty if an edit changes it."""
+        with self._fdb_lock:
+            before = copy.deepcopy(self._fdb)
+            yield
+            # the server repeats entries whenever a port's status changes
+            if self._fdb != before:
+                self._dirty = True
+
     def add_fdb_entries(self, context, fdb_entries, host=None):
-        """Merge l2pop forwarding entries and mark state dirty."""
+        """Merge l2pop forwarding entries."""
         if host and host != self.host:
             return
-        with self._fdb_lock:
+        with self._fdb_edit():
             for network_id, body in fdb_entries.items():
                 if network_id == "chg_ip" or body.get("network_type") != "vxlan":
                     continue
@@ -262,13 +274,12 @@ class BsdBridgeAgent:
                 for agent_ip, infos in body.get("ports", {}).items():
                     have = net["ports"].setdefault(agent_ip, set())
                     have.update(tuple(info) for info in infos)
-        self._dirty = True
 
     def remove_fdb_entries(self, context, fdb_entries, host=None):
-        """Drop l2pop forwarding entries and mark state dirty."""
+        """Drop l2pop forwarding entries."""
         if host and host != self.host:
             return
-        with self._fdb_lock:
+        with self._fdb_edit():
             for network_id, body in fdb_entries.items():
                 net = self._fdb.get(network_id)
                 if net is None or network_id == "chg_ip":
@@ -280,13 +291,12 @@ class BsdBridgeAgent:
                         net["ports"].pop(agent_ip, None)
                 if not net["ports"]:
                     del self._fdb[network_id]
-        self._dirty = True
 
     def update_fdb_entries(self, context, fdb_entries, host=None):
-        """Apply l2pop address changes and mark state dirty."""
+        """Apply l2pop address changes."""
         if host and host != self.host:
             return
-        with self._fdb_lock:
+        with self._fdb_edit():
             for network_id, agents in fdb_entries.get("chg_ip", {}).items():
                 net = self._fdb.get(network_id)
                 if net is None:
@@ -295,7 +305,6 @@ class BsdBridgeAgent:
                     have = net["ports"].setdefault(agent_ip, set())
                     have.difference_update(tuple(i) for i in change.get("before", []))
                     have.update(tuple(i) for i in change.get("after", []))
-        self._dirty = True
 
     def _bridge_entries(self, bridge):
         """Return a bridge's static entries as (mac, member) pairs."""
