@@ -35,6 +35,8 @@ class Port:
     gateway_ip: str | None = None
     gateway_ip6: str | None = None
     prefixes: tuple = ()
+    scope4: str | None = None
+    scope6: str | None = None
 
     @property
     def host_if(self):
@@ -107,6 +109,7 @@ def port_from_rpc(port):
         for s in sorted(subnets.values(), key=lambda s: s["cidr"])
         if ":" in s["cidr"] and s.get("ipv6_ra_mode")
     )
+    scopes = {str(k): v for k, v in (port.get("address_scopes") or {}).items()}
     return Port(
         id=port["id"],
         mac=port["mac_address"].lower(),
@@ -115,6 +118,8 @@ def port_from_rpc(port):
         gateway_ip=gateways.get("inet"),
         gateway_ip6=gateways.get("inet6"),
         prefixes=prefixes,
+        scope4=scopes.get("4"),
+        scope6=scopes.get("6"),
     )
 
 
@@ -211,6 +216,32 @@ def rtadvd_confs(router):
     return confs
 
 
+def scope_rules(router):
+    """Return the pf rules that keep forwarding inside one address scope."""
+    gateway = router.gateway
+    blocks = {"inet": [], "inet6": []}
+    for family, attr in (("inet", "scope4"), ("inet6", "scope6")):
+        for out in router.ports:
+            # snat moves the source into the gateway's scope
+            if family == "inet" and out is gateway and router.enable_snat:
+                continue
+            for src in router.ports:
+                if getattr(src, attr) != getattr(out, attr):
+                    blocks[family].append(
+                        f"block drop out quick on {router.jail_if(out)} {family} "
+                        f"received-on {router.jail_if(src)}"
+                    )
+    passes = []
+    if blocks["inet"] and gateway is not None:
+        qg = router.jail_if(gateway)
+        for fip in router.floating_ips:
+            passes += [
+                f"pass out quick inet to {fip.fixed} received-on {qg}",
+                f"pass out quick on {qg} inet from {fip.floating}",
+            ]
+    return passes + blocks["inet"] + blocks["inet6"]
+
+
 def pf_text(router):
     """Render the jail's pf.conf and its cfg hash."""
     lines = ["set skip on lo0"]
@@ -227,6 +258,7 @@ def pf_text(router):
                 f"nat on {qg} inet from {{ {', '.join(internal)} }} to any "
                 f"-> {gateway.ips[0][0]}"
             )
+    lines += scope_rules(router)
     cfg_hash = hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
     lines.append(f'pass quick all label "{CFG_LABEL}{cfg_hash}"')
     return "\n".join(lines) + "\n", cfg_hash

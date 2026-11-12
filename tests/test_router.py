@@ -256,3 +256,72 @@ class RenderTestCase(unittest.TestCase):
         self.assertEqual(
             router.pf_text(self.r)[1], router.pf_text(router.from_rpc(rpc_router()))[1]
         )
+
+
+class ScopeRulesTestCase(unittest.TestCase):
+    def setUp(self):
+        self.qg = names.router_jail_if_name(GW_PORT_ID, gateway=True)
+        self.qr = names.router_jail_if_name(INT_PORT_ID)
+
+    def rules(self, gw_scopes, int_scopes, **kw):
+        body = rpc_router(
+            gw_port=gw_port(address_scopes=gw_scopes),
+            _interfaces=[int_port(address_scopes=int_scopes)],
+            **kw,
+        )
+        return router.scope_rules(router.from_rpc(body))
+
+    def test_ports_without_scopes_render_no_rules(self):
+        self.assertEqual([], router.scope_rules(router.from_rpc(rpc_router())))
+
+    def test_scopes_are_read_with_integer_or_string_keys(self):
+        port = router.port_from_rpc(int_port(address_scopes={4: "a", "6": "b"}))
+        self.assertEqual(("a", "b"), (port.scope4, port.scope6))
+
+    def test_matching_scopes_render_no_rules(self):
+        scopes = {"4": "s4", "6": "s6"}
+        self.assertEqual([], self.rules(scopes, scopes))
+
+    def test_ipv6_scope_mismatch_is_blocked_both_ways(self):
+        rules = self.rules({"4": None, "6": "s6"}, {"4": None, "6": None})
+        self.assertEqual(
+            [
+                f"block drop out quick on {self.qg} inet6 received-on {self.qr}",
+                f"block drop out quick on {self.qr} inet6 received-on {self.qg}",
+            ],
+            rules,
+        )
+
+    def test_ipv4_mismatch_with_snat_still_leaves_through_the_gateway(self):
+        rules = self.rules({"4": "ext", "6": None}, {"4": None, "6": None})
+        self.assertEqual(
+            [
+                f"pass out quick inet to 10.0.0.5 received-on {self.qg}",
+                f"pass out quick on {self.qg} inet from 203.0.113.50",
+                f"block drop out quick on {self.qr} inet received-on {self.qg}",
+            ],
+            rules,
+        )
+
+    def test_ipv4_mismatch_without_snat_is_blocked_both_ways(self):
+        rules = self.rules(
+            {"4": "ext", "6": None},
+            {"4": None, "6": None},
+            enable_snat=False,
+            _floatingips=[],
+        )
+        self.assertEqual(
+            [
+                f"block drop out quick on {self.qg} inet received-on {self.qr}",
+                f"block drop out quick on {self.qr} inet received-on {self.qg}",
+            ],
+            rules,
+        )
+
+    def test_scope_rules_sit_before_the_marker_and_move_the_hash(self):
+        scoped = rpc_router(gw_port=gw_port(address_scopes={"4": None, "6": "s6"}))
+        text, cfg_hash = router.pf_text(router.from_rpc(scoped))
+        lines = text.splitlines()
+        self.assertTrue(lines[-2].startswith("block drop out quick"))
+        self.assertTrue(lines[-1].endswith(f'cfg:{cfg_hash}"'))
+        self.assertNotEqual(cfg_hash, router.pf_text(router.from_rpc(rpc_router()))[1])
