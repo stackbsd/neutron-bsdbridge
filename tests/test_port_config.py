@@ -227,6 +227,26 @@ class DesiredTestCase(unittest.TestCase):
             cfg.table[names.table_name("sg-v6")].members,
         )
 
+    def test_bind_locks_ipv6_sources_to_fixed_and_link_local(self):
+        cfg = self._build_with_rules(
+            [],
+            fixed_ips=[
+                {"subnet_id": "s1", "ip_address": "10.99.0.5"},
+                {"subnet_id": "s2", "ip_address": "2001:db8::5"},
+            ],
+        )
+        bind = next(iter(cfg.bridge.values())).member["tap3fb01977-a4"].bind
+        self.assertEqual("10.99.0.5", bind.address)
+        self.assertEqual(["2001:db8::5", "fe80::f816:3eff:feaa:bb01"], bind.addresses6)
+
+    def test_ipv6_only_port_is_bound_without_an_ipv4_address(self):
+        cfg = self._build_with_rules(
+            [], fixed_ips=[{"subnet_id": "s2", "ip_address": "2001:db8::5"}]
+        )
+        bind = next(iter(cfg.bridge.values())).member["tap3fb01977-a4"].bind
+        self.assertIsNone(bind.address)
+        self.assertEqual("fa:16:3e:aa:bb:01", bind.mac)
+
     def test_infra_allowances_are_visible_rules(self):
         f = self._filter()
         self.assertEqual(

@@ -7,6 +7,7 @@ from neutron_bsdbridge.constants import PFCTL
 from neutron_bsdbridge.utils import default_run
 
 ANCHOR_PREFIX = "l2-neutron/port/"
+SOURCE6_TABLE = "source6"
 
 # config direction from the workload's view
 # pf's is the host side of the tap
@@ -85,8 +86,9 @@ def tables_referenced(filt):
 def render(ifname, filt=None, bind=None, tables=None):
     """Render one member's anchor text and its cfg hash."""
     rule_lines = []
+    table_lines = []
 
-    if bind is not None:
+    if bind is not None and bind.address is not None:
         # must precede the source lock as DISCOVER is sourced from 0.0.0.0
         rule_lines.append(
             f"pass in quick on {ifname} inet proto udp from 0.0.0.0 "
@@ -94,6 +96,30 @@ def render(ifname, filt=None, bind=None, tables=None):
             f'label "{state_label(ifname)}"'
         )
         rule_lines.append(f"block drop in quick on {ifname} inet from ! {bind.address}")
+    elif bind is not None:
+        rule_lines.append(f"block drop in quick on {ifname} inet all")
+
+    if bind is not None and bind.addresses6:
+        table_lines.append(
+            f"table <{SOURCE6_TABLE}> const {{ {', '.join(bind.addresses6)} }}"
+        )
+        # must precede the source lock as address detection is sourced from ::
+        rule_lines.append(
+            f"pass in quick on {ifname} inet6 proto icmp6 from :: to ff02::/16 "
+            f'keep state (if-bound) label "{state_label(ifname)}"'
+        )
+        rule_lines.append(
+            f"block drop in quick on {ifname} inet6 from ! <{SOURCE6_TABLE}>"
+        )
+        # a workload must not answer as the router or the dhcpv6 server
+        rule_lines.append(
+            f"block drop in quick on {ifname} inet6 proto icmp6 all "
+            f"icmp6-type routeradv"
+        )
+        rule_lines.append(
+            f"block drop in quick on {ifname} inet6 proto udp "
+            f"from any port 547 to any port 546"
+        )
 
     if filt is not None:
         for direction, rules in (("in", filt.in_), ("out", filt.out)):
@@ -102,12 +128,12 @@ def render(ifname, filt=None, bind=None, tables=None):
 
     # rendered deny tail
     rule_lines.append(f"block drop out quick on {ifname} all")
-    cfg_hash = hashlib.sha256("\n".join(rule_lines).encode()).hexdigest()[:16]
+    hashed = "\n".join(table_lines + rule_lines)
+    cfg_hash = hashlib.sha256(hashed.encode()).hexdigest()[:16]
     rule_lines.append(
         f'block drop in quick on {ifname} all label "l2-neutron:cfg:{cfg_hash}"'
     )
 
-    table_lines = []
     for name in sorted(tables_referenced(filt)):
         members = (tables or {}).get(name, [])
         table_lines.append(f"table <{name}> persist {{ {', '.join(members)} }}")

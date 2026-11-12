@@ -1,5 +1,7 @@
 """Port config built from neutron RPC data."""
 
+import ipaddress
+
 from oslo_log import log as logging
 
 from neutron_bsdbridge import constants, names
@@ -34,6 +36,13 @@ SERVICE_IF_NAME = {
     constants.DEVICE_OWNER_ROUTER_INTF: names.router_if_name,
     constants.DEVICE_OWNER_ROUTER_GW: names.router_if_name,
 }
+
+
+def link_local(mac):
+    """Return the link-local address a MAC forms by EUI-64."""
+    octets = bytes.fromhex(mac.replace(":", ""))
+    eui = bytes([octets[0] ^ 0x02, *octets[1:3], 0xFF, 0xFE, *octets[3:]])
+    return str(ipaddress.IPv6Address(b"\xfe\x80" + bytes(6) + eui))
 
 
 def port_value(rule):
@@ -191,13 +200,17 @@ def build(ports, sg_info, interface_mappings):
             }
             member["type"] = "tap"
             member["filter"] = fname
-            v4 = [
-                ip["ip_address"]
-                for ip in port.get("fixed_ips", [])
-                if ":" not in ip["ip_address"]
-            ]
-            if v4 and port.get("mac_address"):
-                member["bind"] = {"mac": port["mac_address"], "address": v4[0]}
+            fixed = [ip["ip_address"] for ip in port.get("fixed_ips", [])]
+            v4 = [ip for ip in fixed if ":" not in ip]
+            v6 = [ip for ip in fixed if ":" in ip]
+            if fixed and port.get("mac_address"):
+                bind = {
+                    "mac": port["mac_address"],
+                    "addresses6": [*v6, link_local(port["mac_address"])],
+                }
+                if v4:
+                    bind["address"] = v4[0]
+                member["bind"] = bind
         stanza["member"][tap] = member
 
     tables = {}

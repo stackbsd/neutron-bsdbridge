@@ -215,15 +215,19 @@ class Segment(Model):
 
 @dataclasses.dataclass
 class Bind(Model):
-    """Port security for one member: the locked MAC and address."""
+    """Port security for one member: the locked MAC and addresses."""
 
     mac: str
-    address: str
+    address: str | None = None
+    addresses6: list[str] = dataclasses.field(default_factory=list)
 
     def __post_init__(self):
-        """Canonicalize the MAC and validate the address shape."""
+        """Canonicalize the MAC and validate the address shapes."""
         self.mac = canonical_mac(self.mac)
-        check_str(self, "address")
+        if self.address is not None:
+            check_str(self, "address")
+        check_str_list(self, "addresses6")
+        self.addresses6 = sorted(set(self.addresses6))
 
 
 @dataclasses.dataclass
