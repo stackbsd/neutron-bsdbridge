@@ -89,7 +89,7 @@ def make_agent(tmpdir, devices, writer_obj=None, reader=None):
     a._fdb_lock = threading.Lock()
     a._installed = {}
     a._fdb_ctl = None
-    a._slow = None
+    a._relay = None
     a._refresh_tunnels = True
     a._dirty = True
     a._failures = 0
@@ -223,7 +223,7 @@ def vxlan_section(**kw):
         "local_ip": "192.168.50.150",
         "udp_port": 4789,
         "ttl": 64,
-        "slow_path_rate": 100,
+        "relay_rate": 100,
     }
     base.update(kw)
     return types.SimpleNamespace(
@@ -304,7 +304,7 @@ class FakeFdbCtl:
         self._do("remove", ifname, mac)
 
 
-class FakeSlowPath:
+class FakeRelay:
     def __init__(self):
         self.tables = None
         self.wanted = None
@@ -355,7 +355,7 @@ def vxlan_agent(tmpdir, ctl=None):
     a = make_agent(tmpdir, devices=set())
     a._vxlan = {"local": "192.0.2.1", "port": 4789, "ttl": 64, "rate": 100}
     a._fdb_ctl = ctl or FakeFdbCtl()
-    a._slow = FakeSlowPath()
+    a._relay = FakeRelay()
     a._run = FakeRun()
     return a
 
@@ -440,7 +440,7 @@ class L2popTestCase(unittest.TestCase):
         )
         self.assertEqual(
             {5042: (["192.0.2.2"], {"10.42.0.11": "fa:16:3e:00:00:0b"}, [])},
-            a._slow.tables,
+            a._relay.tables,
         )
 
     def test_first_program_clears_static_entries_left_on_the_uplink(self):
@@ -461,7 +461,7 @@ class L2popTestCase(unittest.TestCase):
             }
         }
         a._program_vxlan(vxlan_config(member=member), agent_mod.plan_mod.Plan())
-        self.assertEqual({5042: ([], {}, ["10.42.0.10"])}, a._slow.tables)
+        self.assertEqual({5042: ([], {}, ["10.42.0.10"])}, a._relay.tables)
 
     def test_a_member_without_an_ipv4_address_is_not_a_local_address(self):
         a = vxlan_agent(self.tmp.name)
@@ -476,7 +476,7 @@ class L2popTestCase(unittest.TestCase):
             },
         }
         a._program_vxlan(vxlan_config(member=member), agent_mod.plan_mod.Plan())
-        self.assertEqual({5042: ([], {}, ["10.42.0.10"])}, a._slow.tables)
+        self.assertEqual({5042: ([], {}, ["10.42.0.10"])}, a._relay.tables)
 
     def test_reprogramming_applies_only_the_difference(self):
         a = vxlan_agent(self.tmp.name)
@@ -551,7 +551,7 @@ class L2popTestCase(unittest.TestCase):
         a._program_vxlan(vxlan_config(vni=6000), agent_mod.plan_mod.Plan())
         self.assertEqual([agent_mod.names.vxlan_if_name(6000)], list(a._installed))
 
-    def test_sync_asks_the_slow_path_for_the_ports_before_building(self):
+    def test_sync_asks_the_relay_for_the_ports_before_building(self):
         a = vxlan_agent(self.tmp.name)
         a.plugin_rpc.devices = {PORT_ID}
 
@@ -568,8 +568,8 @@ class L2popTestCase(unittest.TestCase):
         )
         a._candidates = {PORT_ID}
         a._sync()
-        self.assertEqual([5042], a._slow.wanted)
-        self.assertEqual([5042], list(a._slow.tables))
+        self.assertEqual([5042], a._relay.wanted)
+        self.assertEqual([5042], list(a._relay.tables))
         self.assertEqual([PORT_ID], a.plugin_rpc.ups)
 
     def test_first_report_asks_for_a_tunnel_refresh(self):

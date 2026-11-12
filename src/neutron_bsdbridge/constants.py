@@ -20,7 +20,10 @@ DHCP_JAIL_IF = "dhcp0"
 
 VXLAN_PORT = 4789
 VXLAN_TTL = 64
-SLOW_PATH_ADDR = "127.0.0.1"
+RELAY_ADDR = "127.0.0.1"
+RELAY_DIR = "/var/run/neutron-bsdbridge-vxlan-relay"
+RELAY_SOCKET = RELAY_DIR + "/control.sock"
+RELAY_STATE = RELAY_DIR + "/state.json"
 
 DESCRIPTION_PREFIX = "neutron port "
 DEVICE_OWNER_DHCP = "network:dhcp"

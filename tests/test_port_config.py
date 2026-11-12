@@ -309,13 +309,13 @@ class DesiredTestCase(unittest.TestCase):
 
 
 VXLAN_CONF = {"local": "10.255.0.11", "port": 4789, "ttl": 64}
-SLOW_PORTS = {5042: 61234}
+RELAY_PORTS = {5042: 61234}
 
 
 class VxlanPortTestCase(unittest.TestCase):
     def test_vxlan_port_builds_its_segment_from_the_conf(self):
         p = port(network_type="vxlan", segmentation_id=5042, mtu=1450)
-        cfg, _ = port_config.build([p], SG_INFO, {}, VXLAN_CONF, SLOW_PORTS)
+        cfg, _ = port_config.build([p], SG_INFO, {}, VXLAN_CONF, RELAY_PORTS)
         bridge = cfg.bridge[names.bridge_name("vxlan", None, 5042, "x")]
         vx = bridge.segment.vxlan
         self.assertEqual(5042, vx.vni)
@@ -338,7 +338,7 @@ class VxlanPortTestCase(unittest.TestCase):
                 device_owner="network:dhcp",
             ),
         ]
-        cfg, _ = port_config.build(ports, SG_INFO, {}, VXLAN_CONF, SLOW_PORTS)
+        cfg, _ = port_config.build(ports, SG_INFO, {}, VXLAN_CONF, RELAY_PORTS)
         bridge = cfg.bridge[names.bridge_name("vxlan", None, 5042, "x")]
         self.assertEqual({1450}, {m.mtu for m in bridge.member.values()})
 
@@ -355,7 +355,7 @@ class VxlanPortTestCase(unittest.TestCase):
         self.assertIsNone(cfg.bridge[bridge].segment)
         self.assertEqual(1, len(devices))
 
-    def test_vxlan_port_without_a_slow_path_socket_renders_without_uplink(self):
+    def test_vxlan_port_without_a_relay_socket_renders_without_uplink(self):
         p = port(network_type="vxlan", segmentation_id=5042, mtu=1450)
         with self.assertLogs(port_config.LOG.logger, "WARNING"):
             cfg, devices = port_config.build([p], SG_INFO, {}, VXLAN_CONF, {})

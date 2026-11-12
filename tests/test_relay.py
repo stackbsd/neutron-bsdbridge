@@ -1,13 +1,14 @@
-"""vxlan slow path tests."""
+"""vxlan relay tests."""
 
 import os
 import socket
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from neutron_bsdbridge.l2_agent import slowpath
+from neutron_bsdbridge import relay
 
 MAC_A = bytes.fromhex("589cfc10ea53")
 MAC_B = bytes.fromhex("fa163eaabb02")
@@ -21,14 +22,14 @@ def vxlan(vni, frame):
 
 def arp_request(spa, tpa, sha=MAC_A):
     body = (
-        slowpath.ARP_IPV4
-        + slowpath.ARP_REQUEST
+        relay.ARP_IPV4
+        + relay.ARP_REQUEST
         + sha
         + socket.inet_aton(spa)
         + b"\x00" * 6
         + socket.inet_aton(tpa)
     )
-    return BROADCAST + sha + slowpath.ETHERTYPE_ARP + body
+    return BROADCAST + sha + relay.ETHERTYPE_ARP + body
 
 
 def ipv4(dst, sport, dport, proto=17, dmac=BROADCAST):
@@ -37,7 +38,7 @@ def ipv4(dst, sport, dport, proto=17, dmac=BROADCAST):
     header[9] = proto
     header[16:20] = socket.inet_aton(dst)
     udp = sport.to_bytes(2, "big") + dport.to_bytes(2, "big") + b"\x00" * 12
-    return dmac + MAC_A + slowpath.ETHERTYPE_IPV4 + bytes(header) + udp
+    return dmac + MAC_A + relay.ETHERTYPE_IPV4 + bytes(header) + udp
 
 
 def ipv6(icmp_type, next_header=58):
@@ -46,7 +47,7 @@ def ipv6(icmp_type, next_header=58):
     header[6] = next_header
     header[24:40] = socket.inet_pton(socket.AF_INET6, "ff02::1")
     body = bytes([icmp_type]) + b"\x00" * 23
-    return ALL_NODES + MAC_A + slowpath.ETHERTYPE_IPV6 + bytes(header) + body
+    return ALL_NODES + MAC_A + relay.ETHERTYPE_IPV6 + bytes(header) + body
 
 
 class Clock:
@@ -57,23 +58,32 @@ class Clock:
         return self.now
 
 
-def make(rate=100, clock=None, port=4789):
-    sp = slowpath.SlowPath("127.0.0.1", port, rate, clock or Clock())
+def message(networks, rate=100, port=4789):
+    return {"local": "127.0.0.1", "port": port, "rate": rate, "networks": networks}
+
+
+def make(rate=100, clock=None, port=4789, state=None):
+    sp = relay.Relay(state, clock or Clock())
     sp.configure(
-        {
-            "5042": {
-                "peers": ["192.0.2.2", "192.0.2.3"],
-                "arp": {"10.99.0.2": MAC_B.hex(":")},
-                "local": ["10.99.0.1"],
-            }
-        }
+        message(
+            {
+                "5042": {
+                    "peers": ["192.0.2.2", "192.0.2.3"],
+                    "arp": {"10.99.0.2": MAC_B.hex(":")},
+                    "local": ["10.99.0.1"],
+                }
+            },
+            rate,
+            port,
+        )
     )
     return sp
 
 
 def close(sp):
-    sp.configure({})
-    sp.tx.close()
+    if sp.tx is not None:
+        sp.configure(message({}))
+        sp.tx.close()
 
 
 class ActionTestCase(unittest.TestCase):
@@ -101,8 +111,8 @@ class ActionTestCase(unittest.TestCase):
         self.assertEqual(request[:8], payload[:8])
         frame = payload[8:]
         self.assertEqual(60, len(frame))
-        self.assertEqual(MAC_A + MAC_B + slowpath.ETHERTYPE_ARP, frame[:14])
-        self.assertEqual(slowpath.ARP_IPV4 + slowpath.ARP_REPLY, frame[14:22])
+        self.assertEqual(MAC_A + MAC_B + relay.ETHERTYPE_ARP, frame[:14])
+        self.assertEqual(relay.ARP_IPV4 + relay.ARP_REPLY, frame[14:22])
         self.assertEqual(MAC_B + socket.inet_aton("10.99.0.2"), frame[22:32])
         self.assertEqual(MAC_A + socket.inet_aton("10.99.0.1"), frame[32:42])
         self.assertEqual(1, self.sp.counts["answered"])
@@ -161,15 +171,57 @@ class ConfigureTestCase(unittest.TestCase):
         probe.bind(("127.0.0.1", 0))
         free = probe.getsockname()[1]
         probe.close()
-        sp = slowpath.SlowPath("127.0.0.1", 4789, 100, Clock())
+        sp = relay.Relay(clock=Clock())
         self.addCleanup(close, sp)
-        sp.configure({"5042": {"port": free}, "5043": {"port": taken}, "5044": {}})
+        sp.configure(
+            message({"5042": {"port": free}, "5043": {"port": taken}, "5044": {}})
+        )
         ports = sp.ports()
         self.assertEqual(free, ports[5042])
         self.assertNotEqual(taken, ports[5043])
         self.assertEqual(3, len(set(ports.values())))
         sock = sp.networks[5044].sock
-        sp.configure({"5042": {"port": free}})
+        sp.configure(message({"5042": {"port": free}}))
         self.assertEqual([5042], list(sp.networks))
         self.assertEqual(-1, sock.fileno())
         self.assertEqual({5042: free}, sp.status()["ports"])
+
+    def test_a_description_without_tables_keeps_the_ones_held(self):
+        sp = make()
+        self.addCleanup(close, sp)
+        sp.configure(message({"5042": {"port": sp.ports()[5042]}}))
+        net = sp.networks[5042]
+        self.assertEqual(("192.0.2.2", "192.0.2.3"), net.peers)
+        self.assertEqual({socket.inet_aton("10.99.0.2"): MAC_B}, net.arp)
+        sp.configure(message({"5042": {"peers": []}}))
+        self.assertEqual((), net.peers)
+        self.assertEqual({socket.inet_aton("10.99.0.2"): MAC_B}, net.arp)
+
+
+class StateTestCase(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state = os.path.join(tmp.name, "state.json")
+
+    def test_a_new_process_resumes_the_saved_networks_on_their_ports(self):
+        first = make(state=self.state)
+        first.save()
+        port = first.ports()[5042]
+        close(first)
+        second = relay.Relay(self.state, Clock())
+        self.addCleanup(close, second)
+        second.load()
+        self.assertEqual({5042: port}, second.ports())
+        self.assertEqual(("192.0.2.2", "192.0.2.3"), second.networks[5042].peers)
+        self.assertEqual("127.0.0.1", second.local)
+
+    def test_a_missing_or_broken_state_file_starts_empty(self):
+        sp = relay.Relay(self.state, Clock())
+        self.addCleanup(close, sp)
+        sp.load()
+        self.assertEqual({}, sp.networks)
+        with open(self.state, "w") as f:
+            f.write("{not json")
+        sp.load()
+        self.assertEqual({}, sp.networks)

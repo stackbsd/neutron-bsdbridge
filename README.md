@@ -102,6 +102,12 @@ Set `local_ip` to the IP assigned to the underlay network interface:
 local_ip = 192.168.50.150
 ```
 
+Enable the vxlan relay on every host running the L2 agent, it runs as the `neutron` user:
+
+```
+sysrc neutron_bsdbridge_vxlan_relay_enable=YES
+```
+
 Enable the l2population mechanism driver, set the tenant network type to vxlan and configure the VNI range:
 
 `ml2_conf.ini`

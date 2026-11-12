@@ -28,9 +28,8 @@ from oslo_log import log as logging
 from neutron_bsdbridge import config as bsdbridge_config
 from neutron_bsdbridge import constants, ifconfig, names
 from neutron_bsdbridge.l2_agent import plan as plan_mod
-from neutron_bsdbridge.l2_agent import port_config
+from neutron_bsdbridge.l2_agent import port_config, relay_client
 from neutron_bsdbridge.l2_agent import reconcile as reconcile_mod
-from neutron_bsdbridge.l2_agent import supervisor as supervisor_mod
 from neutron_bsdbridge.l2_agent import vxlan as vxlan_mod
 from neutron_bsdbridge.l2_agent import writer as writer_mod
 from neutron_bsdbridge.utils import default_run
@@ -58,7 +57,7 @@ def vxlan_conf(conf, run=default_run):
         "local": str(vx.local_ip),
         "port": vx.udp_port,
         "ttl": vx.ttl,
-        "rate": vx.slow_path_rate,
+        "rate": vx.relay_rate,
     }
 
 
@@ -74,12 +73,12 @@ def configurations(conf, vxlan):
     return out
 
 
-def slow_path_ports(run=default_run):
+def scan_relay_ports(run=default_run):
     """Return the loopback port every existing vxlan interface sends to."""
     return {
         iface.vni: iface.vxlan_remote_port
         for iface in ifconfig.scan_group(constants.OWNED_GROUP, run).values()
-        if iface.vni is not None and iface.vxlan_remote == constants.SLOW_PATH_ADDR
+        if iface.vni is not None and iface.vxlan_remote == constants.RELAY_ADDR
     }
 
 
@@ -128,14 +127,14 @@ class BsdBridgeAgent:
         self._fdb_lock = threading.Lock()
         self._installed = {}
         self._fdb_ctl = vxlan_mod
-        self._slow = None
+        self._relay = None
         if self._vxlan is not None:
-            self._slow = supervisor_mod.SlowPathProcess(
+            self._relay = relay_client.RelayClient(
+                constants.RELAY_SOCKET,
                 self._vxlan["local"],
                 self._vxlan["port"],
                 self._vxlan["rate"],
-                ports=slow_path_ports(self._run),
-                on_restart=self._mark_dirty,
+                ports=scan_relay_ports(self._run),
             )
         # ask l2pop for every forwarding entry on the first report
         self._refresh_tunnels = True
@@ -249,10 +248,6 @@ class BsdBridgeAgent:
             self._candidates.add(port_id)
         self._dirty = True
 
-    def _mark_dirty(self):
-        """Request a sync."""
-        self._dirty = True
-
     def add_fdb_entries(self, context, fdb_entries, host=None):
         """Merge l2pop forwarding entries and mark state dirty."""
         if host and host != self.host:
@@ -322,7 +317,7 @@ class BsdBridgeAgent:
             raise OSError(f"{' '.join(argv[1:])}: {err.strip()}")
 
     def _program_vxlan(self, config, the_plan):
-        """Program the forwarding tables and the slow path from l2pop."""
+        """Program the forwarding tables and the relay from l2pop."""
         with self._fdb_lock:
             by_vni = {
                 net["vni"]: {ip: set(infos) for ip, infos in net["ports"].items()}
@@ -379,7 +374,7 @@ class BsdBridgeAgent:
             tables[vni] = (peers, arp, local)
         for ifname in set(self._installed) - wanted_ifs:
             del self._installed[ifname]
-        self._slow.update(tables)
+        self._relay.update(tables)
         if failed:
             raise ReconcileError(
                 "%d forwarding table(s) failed, first: %s" % (len(failed), failed[0])
@@ -427,15 +422,15 @@ class BsdBridgeAgent:
                 self.context, devices=our_devices
             )
 
-        # the uplink of a vxlan network sends to its slow path socket
-        slow_ports = None
+        # the uplink of a vxlan network sends to its relay socket
+        relay_ports = None
         if self._vxlan is not None:
             vnis = {
                 d["segmentation_id"]
                 for d in details
                 if d.get("network_type") == "vxlan"
             }
-            slow_ports = self._slow.ports_for(sorted(vnis))
+            relay_ports = self._relay.ports_for(sorted(vnis))
 
         # build and reconcile
         config, rendered_devices = port_config.build(
@@ -443,7 +438,7 @@ class BsdBridgeAgent:
             sg_info,
             self.conf.bsdbridge.physical_interface_mappings,
             self._vxlan,
-            slow_ports,
+            relay_ports,
         )
         result = reconcile_mod.reconcile(
             config, writer=self._writer, reader=self._reader, run=self._run
@@ -562,10 +557,8 @@ class BsdBridgeAgent:
     def _report_state(self):
         """Send the agent state report to the server."""
         try:
-            if self._slow is not None:
-                self.agent_state["configurations"]["vxlan_slow_path"] = (
-                    self._slow.stats()
-                )
+            if self._relay is not None:
+                self.agent_state["configurations"]["vxlan_relay"] = self._relay.stats()
             self.state_rpc.report_state(self.context, self.agent_state)
             self.agent_state.pop("start_flag", None)
         except Exception:
@@ -583,8 +576,6 @@ class BsdBridgeAgent:
         threading.Thread(target=report_loop, daemon=True).start()
         if self.conf.bsdbridge.devd_pipe:
             threading.Thread(target=self._devd_loop, daemon=True).start()
-        if self._slow is not None:
-            threading.Thread(target=self._slow.run, daemon=True).start()
 
         consumers = [
             [topics.PORT, topics.UPDATE],

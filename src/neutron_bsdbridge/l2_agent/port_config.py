@@ -142,7 +142,7 @@ def infra_rules():
     return tuple(tables)
 
 
-def build(ports, sg_info, interface_mappings, vxlan_conf=None, slow_ports=None):
+def build(ports, sg_info, interface_mappings, vxlan_conf=None, relay_ports=None):
     """Build a validated Config plus the sorted port uuids it covers."""
     member_ips = (sg_info or {}).get("sg_member_ips", {})
 
@@ -170,7 +170,7 @@ def build(ports, sg_info, interface_mappings, vxlan_conf=None, slow_ports=None):
         mtu = port.get("mtu") or None
         if port.get("network_type") == "vxlan":
             vni = port["segmentation_id"]
-            remote_port = (slow_ports or {}).get(vni)
+            remote_port = (relay_ports or {}).get(vni)
             if vxlan_conf is None:
                 LOG.warning(
                     "vxlan is not configured; port %s renders without its uplink",
@@ -178,8 +178,7 @@ def build(ports, sg_info, interface_mappings, vxlan_conf=None, slow_ports=None):
                 )
             elif remote_port is None:
                 LOG.warning(
-                    "no slow path socket for vni %s; port %s renders without "
-                    "its uplink",
+                    "no relay socket for vni %s; port %s renders without its uplink",
                     vni,
                     port["port_id"],
                 )

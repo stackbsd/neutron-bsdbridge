@@ -1,7 +1,7 @@
 """Writer to apply the plan to the running kernel."""
 
 from neutron_bsdbridge import ifconfig
-from neutron_bsdbridge.constants import IFCONFIG, OWNED_GROUP, PFCTL, SLOW_PATH_ADDR
+from neutron_bsdbridge.constants import IFCONFIG, OWNED_GROUP, PFCTL, RELAY_ADDR
 from neutron_bsdbridge.l2_agent import plan as plan_mod
 from neutron_bsdbridge.l2_agent.pf import anchor_name
 from neutron_bsdbridge.l2_agent.pf import kill_port_states as pf_state_kill
@@ -52,7 +52,7 @@ def argv_for(op):
             "vxlanlocal",
             op.local,
             "vxlanremote",
-            SLOW_PATH_ADDR,
+            RELAY_ADDR,
             "vxlanlocalport",
             str(op.port),
             "vxlanremoteport",

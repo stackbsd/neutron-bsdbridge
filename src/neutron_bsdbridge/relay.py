@@ -1,19 +1,21 @@
-"""vxlan slow path process for ARP, DHCP and neighbour discovery."""
+"""vxlan relay service for ARP, DHCP and neighbour discovery."""
 
 import argparse
 import dataclasses
 import json
 import logging
+import os
 import select
 import socket
 import sys
 import time
 
-from neutron_bsdbridge.constants import SLOW_PATH_ADDR
+from neutron_bsdbridge.constants import RELAY_ADDR, RELAY_SOCKET, RELAY_STATE
 
 LOG = logging.getLogger(__name__)
 
 BUFSIZE = 65535
+CONTROL_TIMEOUT = 5
 VXLAN_HEADER = 8
 ETHER_MIN = 60
 ETHERTYPE_ARP = b"\x08\x06"
@@ -41,6 +43,7 @@ class Network:
     peers: tuple = ()
     arp: dict = dataclasses.field(default_factory=dict)
     local: frozenset = frozenset()
+    tables: dict = dataclasses.field(default_factory=dict)
 
 
 def action(frame, arp, local):
@@ -84,23 +87,32 @@ def arp_reply(frame, arp):
     return (sha + mac + ETHERTYPE_ARP + body).ljust(ETHER_MIN, b"\x00")
 
 
-class SlowPath:
+class Relay:
     """Loopback sockets and tables for every vxlan network on the host."""
 
-    def __init__(self, local, port, rate, clock=time.monotonic):
-        """Bind the sending socket and start with no networks."""
-        self.local = local
-        self.port = port
-        self.rate = rate
+    def __init__(self, state=None, clock=time.monotonic):
+        """Start with no sender and no networks."""
+        self.state = state
         self.clock = clock
+        self.local = None
+        self.port = None
+        self.rate = 1
+        self.tx = None
         self.networks = {}
         self.counts = {"answered": 0, "forwarded": 0, "dropped": 0}
-        self.tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.tx.bind((local, 0))
 
-    def configure(self, networks):
-        """Open, update and close network sockets to match a description."""
-        wanted = {int(vni): desc for vni, desc in networks.items()}
+    def configure(self, message):
+        """Bind the sender and match the network sockets to a description."""
+        if message["local"] != self.local:
+            tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            tx.bind((message["local"], 0))
+            if self.tx is not None:
+                self.tx.close()
+            self.tx = tx
+            self.local = message["local"]
+        self.port = message["port"]
+        self.rate = message["rate"]
+        wanted = {int(vni): desc for vni, desc in message["networks"].items()}
         for vni in set(self.networks) - set(wanted):
             self.networks.pop(vni).sock.close()
         for vni, desc in wanted.items():
@@ -109,21 +121,61 @@ class SlowPath:
                 now = self.clock()
                 net = Network(self.open(desc.get("port")), self.rate, now)
                 self.networks[vni] = net
-            net.peers = tuple(desc.get("peers", ()))
+            # a description without tables keeps the ones already held
+            for key in ("peers", "arp", "local"):
+                if key in desc:
+                    net.tables[key] = desc[key]
+            net.peers = tuple(net.tables.get("peers", ()))
             net.arp = {
                 socket.inet_aton(ip): bytes.fromhex(mac.replace(":", ""))
-                for ip, mac in desc.get("arp", {}).items()
+                for ip, mac in net.tables.get("arp", {}).items()
             }
-            net.local = frozenset(socket.inet_aton(ip) for ip in desc.get("local", ()))
+            net.local = frozenset(
+                socket.inet_aton(ip) for ip in net.tables.get("local", ())
+            )
+
+    def snapshot(self):
+        """Return the description that rebuilds the current networks."""
+        ports = self.ports()
+        return {
+            "local": self.local,
+            "port": self.port,
+            "rate": self.rate,
+            "networks": {
+                str(vni): dict(net.tables, port=ports[vni])
+                for vni, net in self.networks.items()
+            },
+        }
+
+    def save(self):
+        """Write the snapshot to the state file."""
+        if self.state is None:
+            return
+        scratch = self.state + ".tmp"
+        with open(scratch, "w") as f:
+            json.dump(self.snapshot(), f)
+        os.replace(scratch, self.state)
+
+    def load(self):
+        """Configure from the state file of a previous run."""
+        try:
+            with open(self.state) as f:
+                self.configure(json.load(f))
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, KeyError) as exc:
+            LOG.warning("state file ignored: %s", exc)
+            return
+        LOG.info("resumed %d network(s) from the state file", len(self.networks))
 
     def open(self, port):
         """Bind a loopback socket on a port, or on any port if it is taken."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            sock.bind((SLOW_PATH_ADDR, port or 0))
+            sock.bind((RELAY_ADDR, port or 0))
         except OSError:
             # the agent recreates the interface for the new port
-            sock.bind((SLOW_PATH_ADDR, 0))
+            sock.bind((RELAY_ADDR, 0))
         return sock
 
     def ports(self):
@@ -176,10 +228,30 @@ class SlowPath:
                 self.counts["dropped"] += 1
                 LOG.debug("send to %s failed: %s", address[0], exc)
 
-    def run(self, control=sys.stdin.buffer, reply=sys.stdout.buffer):
-        """Serve the sockets and the control pipe until the pipe closes."""
+    def control(self, listener):
+        """Answer one request on the control socket."""
+        conn, _addr = listener.accept()
+        with conn:
+            conn.settimeout(CONTROL_TIMEOUT)
+            try:
+                line = b""
+                while not line.endswith(b"\n"):
+                    chunk = conn.recv(BUFSIZE)
+                    if not chunk:
+                        return
+                    line += chunk
+                message = json.loads(line)
+                if "networks" in message:
+                    self.configure(message)
+                    self.save()
+                conn.sendall((json.dumps(self.status()) + "\n").encode())
+            except (OSError, ValueError, KeyError) as exc:
+                LOG.warning("control request failed: %s", exc)
+
+    def run(self, listener):
+        """Serve the network sockets and the control socket forever."""
         poller = select.poll()
-        poller.register(control, select.POLLIN)
+        poller.register(listener, select.POLLIN)
         polled = {}
         while True:
             # a closed socket's descriptor can already belong to a new one
@@ -203,26 +275,36 @@ class SlowPath:
             for fd, _event in poller.poll(None if timeout is None else timeout * 1000):
                 if fd in polled:
                     self.serve(polled[fd])
-                    continue
-                line = control.readline()
-                if not line:
-                    return
-                message = json.loads(line)
-                if "networks" in message:
-                    self.configure(message["networks"])
-                reply.write((json.dumps(self.status()) + "\n").encode())
-                reply.flush()
+                else:
+                    self.control(listener)
+
+
+def listen(path):
+    """Bind the control socket for its owner only."""
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    mask = os.umask(0o077)
+    try:
+        listener.bind(path)
+    finally:
+        os.umask(mask)
+    listener.listen()
+    return listener
 
 
 def main(argv=None):
-    """Console entrypoint for the slow path process."""
+    """Console entrypoint for the vxlan relay service."""
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--local", required=True)
-    parser.add_argument("--port", type=int, required=True)
-    parser.add_argument("--rate", type=int, required=True)
+    parser.add_argument("--socket", default=RELAY_SOCKET)
+    parser.add_argument("--state", default=RELAY_STATE)
     args = parser.parse_args(argv)
-    SlowPath(args.local, args.port, args.rate).run()
+    relay = Relay(args.state)
+    relay.load()
+    relay.run(listen(args.socket))
 
 
 if __name__ == "__main__":

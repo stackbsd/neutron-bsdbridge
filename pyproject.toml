@@ -17,6 +17,7 @@ bsdbridge = "neutron_bsdbridge.mech:BsdBridgeMechanismDriver"
 neutron-bsdbridge-l2-agent = "neutron_bsdbridge.l2_agent.agent:main"
 neutron-bsdbridge-dhcp-agent = "neutron_bsdbridge.dhcp_agent.agent:main"
 neutron-bsdbridge-l3-agent = "neutron_bsdbridge.l3_agent.agent:main"
+neutron-bsdbridge-vxlan-relay = "neutron_bsdbridge.relay:main"
 
 [build-system]
 requires = ["uv_build>=0.11.28"]
