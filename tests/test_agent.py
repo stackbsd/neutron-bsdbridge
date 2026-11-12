@@ -463,6 +463,21 @@ class L2popTestCase(unittest.TestCase):
         a._program_vxlan(vxlan_config(member=member), agent_mod.plan_mod.Plan())
         self.assertEqual({5042: ([], {}, ["10.42.0.10"])}, a._slow.tables)
 
+    def test_a_member_without_an_ipv4_address_is_not_a_local_address(self):
+        a = vxlan_agent(self.tmp.name)
+        member = {
+            "tap1": {
+                "type": "tap",
+                "bind": {"mac": "fa:16:3e:00:00:0a", "address": "10.42.0.10"},
+            },
+            "tap2": {
+                "type": "tap",
+                "bind": {"mac": "fa:16:3e:00:00:0b", "addresses6": ["2001:db8::b"]},
+            },
+        }
+        a._program_vxlan(vxlan_config(member=member), agent_mod.plan_mod.Plan())
+        self.assertEqual({5042: ([], {}, ["10.42.0.10"])}, a._slow.tables)
+
     def test_reprogramming_applies_only_the_difference(self):
         a = vxlan_agent(self.tmp.name)
         a.add_fdb_entries(None, fdb({"192.0.2.2": [FLOOD, VM_B]}))

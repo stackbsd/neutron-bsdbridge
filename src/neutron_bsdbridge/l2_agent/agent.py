@@ -369,7 +369,13 @@ class BsdBridgeAgent:
                 self._installed.pop(ifname, None)
                 continue
             self._installed[ifname] = installed
-            local = sorted({m.bind.address for m in bridge.member.values() if m.bind})
+            local = sorted(
+                {
+                    m.bind.address
+                    for m in bridge.member.values()
+                    if m.bind and m.bind.address
+                }
+            )
             tables[vni] = (peers, arp, local)
         for ifname in set(self._installed) - wanted_ifs:
             del self._installed[ifname]
