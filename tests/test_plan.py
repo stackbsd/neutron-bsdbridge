@@ -7,7 +7,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from neutron_bsdbridge import ifconfig, names
-from neutron_bsdbridge.l2_agent import model, plan
+from neutron_bsdbridge.l2_agent import model, pf, plan
 
 
 def iface(
@@ -210,18 +210,38 @@ class VxlanTestCase(unittest.TestCase):
             ],
             p.creates,
         )
+        _text, cfg_hash = pf.render_vxlan(VX)
         self.assertEqual(
             [
+                plan.LoadAnchor(ifname=VX, filter="vxlan", cfg_hash=cfg_hash),
                 plan.AddMember(bridge="net42", member=VX),
                 plan.ClearDiscover(bridge="net42", member=VX),
             ],
-            p.adds[-2:],
+            p.adds[-3:],
         )
 
     def test_reconciled_vxlan_plans_to_nothing(self):
         """A matching vxlan plans to nothing."""
         p = plan.diff(cfg(bridge=VXLAN), vxlan_kernel())
         self.assertTrue(p.empty, [str(o) for o in p.ops])
+        _text, cfg_hash = pf.render_vxlan(VX)
+        loaded = {VX: pf.AnchorState(exists=True, cfg_hash=cfg_hash)}
+        p = plan.diff(cfg(bridge=VXLAN), vxlan_kernel(), pf_state=loaded)
+        self.assertTrue(p.empty, [str(o) for o in p.ops])
+
+    def test_a_missing_or_stale_uplink_anchor_is_loaded(self):
+        """A vxlan member without its current anchor gets it loaded."""
+        text, cfg_hash = pf.render_vxlan(VX)
+        for state in (
+            {},
+            {VX: pf.AnchorState(exists=False)},
+            {VX: pf.AnchorState(exists=True, cfg_hash="0" * 16)},
+        ):
+            p = plan.diff(cfg(bridge=VXLAN), vxlan_kernel(), pf_state=state)
+            self.assertEqual(
+                [plan.LoadAnchor(ifname=VX, filter="vxlan", cfg_hash=cfg_hash)], p.ops
+            )
+            self.assertEqual(text, p.ops[0].text)
 
     def test_drift_recreates_the_interface(self):
         """Drift on vni, local, remote or either port plans a recreate."""
@@ -240,11 +260,8 @@ class VxlanTestCase(unittest.TestCase):
             )
             self.assertEqual(VX, p.creates[1].name)
             self.assertEqual(
-                [
-                    plan.AddMember(bridge="net42", member=VX),
-                    plan.ClearDiscover(bridge="net42", member=VX),
-                ],
-                p.adds,
+                [plan.LoadAnchor, plan.AddMember, plan.ClearDiscover],
+                [type(o) for o in p.adds],
             )
             self.assertEqual([], p.destroys)
 

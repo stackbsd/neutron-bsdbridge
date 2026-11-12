@@ -141,6 +141,26 @@ def render(ifname, filt=None, bind=None, tables=None):
     return "\n".join(table_lines + rule_lines) + "\n", cfg_hash
 
 
+def render_vxlan(ifname):
+    """Render a vxlan uplink's anchor text and its cfg hash."""
+    nd = "{ neighbrsol, neighbradv, routersol, routeradv }"
+    lines = [
+        f"pass out quick on {ifname} inet proto udp from any port 68 "
+        "to 255.255.255.255 port 67 no state",
+        f"pass out quick on {ifname} inet proto udp from any port 67 "
+        "to 255.255.255.255 port 68 no state",
+        f"block drop out quick on {ifname} inet from any "
+        "to { 224.0.0.0/4, 255.255.255.255 }",
+        f"pass out quick on {ifname} inet6 proto icmp6 all icmp6-type {nd} no state",
+    ]
+    cfg_hash = hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
+    lines.append(
+        f"block drop out quick on {ifname} inet6 from any to ff00::/8 "
+        f'label "l2-neutron:cfg:{cfg_hash}"'
+    )
+    return "\n".join(lines) + "\n", cfg_hash
+
+
 def wanted_tables(filt, config):
     """Return table name to canonical member list for a filter's references."""
     return {name: config.table[name].members for name in tables_referenced(filt)}

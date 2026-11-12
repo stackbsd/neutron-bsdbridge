@@ -364,6 +364,19 @@ def diff(config, kernel, pf_state=None):
         manufactured = seg is not None and (
             seg.vlan is not None or seg.vxlan is not None
         )
+        if seg is not None and seg.vxlan is not None:
+            # keeps tenant broadcast and multicast from reaching the slow path
+            text, cfg_hash = pf.render_vxlan(names[0])
+            state = pf_state.get(names[0]) if pf_state is not None else None
+            stale = pf_state is not None and (
+                state is None or not state.exists or state.cfg_hash != cfg_hash
+            )
+            if names[0] not in current or stale:
+                plan.adds.append(
+                    LoadAnchor(
+                        ifname=names[0], filter="vxlan", text=text, cfg_hash=cfg_hash
+                    )
+                )
         for name in names:
             if name in current:
                 continue
@@ -416,7 +429,9 @@ def diff(config, kernel, pf_state=None):
     # clean up pf anchors
     if pf_state is not None:
         policied = set()
-        for bridge in config.bridge.values():
+        for bname, bridge in config.bridge.items():
+            if bridge.segment is not None and bridge.segment.vxlan is not None:
+                policied.add(uplink_names(bname, bridge, config)[0])
             for mname, member in bridge.member.items():
                 if member.filter or member.bind:
                     policied.add(mname)

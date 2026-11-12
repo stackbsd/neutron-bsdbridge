@@ -518,3 +518,24 @@ class DhcpClientTestCase(unittest.TestCase):
         )
         self.assertLess(dhcp, lock, "the lock would eat every DHCPDISCOVER otherwise")
         self.assertIn("pass in quick on tap0 inet proto udp", lines[dhcp])
+
+
+class VxlanUplinkTestCase(unittest.TestCase):
+    def test_dhcp_and_neighbour_discovery_pass_before_the_blocks(self):
+        text, cfg_hash = pf.render_vxlan("vx1")
+        lines = text.splitlines()
+        self.assertEqual(5, len(lines))
+        self.assertIn("port 68 to 255.255.255.255 port 67 no state", lines[0])
+        self.assertIn("port 67 to 255.255.255.255 port 68 no state", lines[1])
+        self.assertEqual(
+            "block drop out quick on vx1 inet from any "
+            "to { 224.0.0.0/4, 255.255.255.255 }",
+            lines[2],
+        )
+        self.assertIn("icmp6-type { neighbrsol, neighbradv, routersol", lines[3])
+        self.assertEqual(
+            "block drop out quick on vx1 inet6 from any to ff00::/8 "
+            f'label "l2-neutron:cfg:{cfg_hash}"',
+            lines[4],
+        )
+        self.assertEqual(cfg_hash, pf.parse_rules_hash(text))
