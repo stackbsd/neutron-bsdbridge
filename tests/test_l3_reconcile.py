@@ -1,5 +1,6 @@
 """l3 reconcile tests against a scripted, stateful fake kernel."""
 
+import dataclasses
 import os
 import sys
 import tempfile
@@ -37,6 +38,30 @@ RTR = router.Router(
     enable_snat=True,
 )
 QG = RTR.jail_if(GW)
+GW6 = router.Port(
+    id=GW.id,
+    mac=GW.mac,
+    ips=(*GW.ips, ("2001:db8:ffff::10", 64)),
+    cidrs=GW.cidrs,
+    gateway_ip=GW.gateway_ip,
+    gateway_ip6="fe80::1",
+)
+INT6 = router.Port(
+    id=INT.id,
+    mac=INT.mac,
+    ips=(*INT.ips, ("2001:db8:1::1", 64)),
+    cidrs=INT.cidrs,
+    gateway_ip=INT.gateway_ip,
+    prefixes=(router.Prefix(cidr="2001:db8:1::/64", mode="slaac"),),
+)
+RTR6 = router.Router(
+    id=ROUTER_ID,
+    gateway=GW6,
+    interfaces=(INT6,),
+    floating_ips=(),
+    routes=(("2001:db8:7::/64", "2001:db8:1::7"),),
+)
+RTADVD_PID = "4242"
 QR = RTR.jail_if(INT)
 
 
@@ -46,6 +71,9 @@ class FakeKernel(jail_fake.FakeKernel):
     def __init__(self):
         super().__init__()
         self.forwarding = {}  # jail -> "0" | "1"
+        self.forwarding6 = {}  # jail -> "0" | "1"
+        self.rtadvd = {}  # pid -> argv of a running rtadvd
+        self.signals = []
         self.routes = {}  # jail -> {(dest, gw)}
         self.pf_enabled = {}  # jail -> bool
         self.pf_rules = {}  # jail -> text
@@ -53,28 +81,47 @@ class FakeKernel(jail_fake.FakeKernel):
     def jexec(self, jail_name, inner):
         prog = inner[0]
         if prog == constants.SYSCTL:
+            knob = inner[-1].split("=")[0]
+            table = self.forwarding6 if "inet6" in knob else self.forwarding
             if inner[1] == "-n":
-                return 0, self.forwarding.get(jail_name, "0") + "\n", ""
+                return 0, table.get(jail_name, "0") + "\n", ""
             key, value = inner[1].split("=")
-            self.forwarding[jail_name] = value
+            table[jail_name] = value
             return 0, f"{key}: 0 -> {value}\n", ""
         if prog == constants.NETSTAT:
+            v6 = inner[-1] == "inet6"
             lines = [
                 "Routing tables",
                 "",
-                "Internet:",
+                "Internet6:" if v6 else "Internet:",
                 "Destination Gateway Flags Netif",
             ]
             for dest, gw in sorted(self.routes.get(jail_name, set())):
-                shown = "default" if dest == "0.0.0.0/0" else dest.removesuffix("/32")
+                if (":" in dest) != v6:
+                    continue
+                shown = dest.removesuffix("/32").removesuffix("/128")
+                if dest in ("0.0.0.0/0", "::/0"):
+                    shown = "default"
                 lines.append(f"{shown:18} {gw:18} UGS  qg-x")
-            lines.append("10.0.0.0/24        link#2             U    qr-x")
+            if v6:
+                lines.append("fe80::%qr-x/64     link#2             U    qr-x")
+            else:
+                lines.append("10.0.0.0/24        link#2             U    qr-x")
             return 0, "\n".join(lines) + "\n", ""
+        if prog == constants.RTADVD:
+            pid = str(int(RTADVD_PID) + len(self.rtadvd))
+            self.rtadvd[pid] = inner
+            with open(inner[inner.index("-p") + 1], "w") as f:
+                f.write(pid)
+            return 0, "", ""
         if prog == constants.ROUTE:
             routes = self.routes.setdefault(jail_name, set())
-            dest = router.normalize_destination(inner[3])
+            dest = inner[4]
+            if dest == "default":
+                dest = "::/0" if inner[3] == "-inet6" else "0.0.0.0/0"
+            dest = router.normalize_destination(dest)
             if inner[2] == "add":
-                routes.add((dest, inner[4]))
+                routes.add((dest, inner[5]))
                 return 0, "", ""
             routes.difference_update({r for r in routes if r[0] == dest})
             return 0, "", ""
@@ -99,6 +146,18 @@ class FakeKernel(jail_fake.FakeKernel):
                     self.pf_rules[jail_name] = f.read()
                 return 0, "", ""
         raise AssertionError(f"unscripted jexec: {jail_name} {inner}")
+
+    def host(self, argv):
+        if argv[0] == constants.PS:
+            if argv[2] in self.rtadvd:
+                return 0, " ".join(self.rtadvd[argv[2]]) + "\n", ""
+            return 1, "", ""
+        if argv[0] == constants.KILL:
+            self.signals.append(argv[1:])
+            if argv[1] != "-HUP":
+                del self.rtadvd[argv[1]]
+            return 0, "", ""
+        raise AssertionError(f"unscripted argv: {argv}")
 
 
 class ReconcileTestCase(unittest.TestCase):
@@ -190,6 +249,72 @@ class ReconcileTestCase(unittest.TestCase):
         self.assertIn(("192.168.7.0/24", "10.0.0.8"), self.kernel.routes[RTR.jail])
         self.assertNotIn(("192.168.7.0/24", "10.0.0.7"), self.kernel.routes[RTR.jail])
 
+    def test_ipv6_router_gets_addresses_routes_and_rtadvd(self):
+        result = self._reconcile([RTR6])
+        self.assertEqual([], result.failed, [str(r) for r in result.failed])
+        self.assertEqual("1", self.kernel.forwarding6[RTR.jail])
+        self.assertEqual(
+            [("2001:db8:1::1", 64)], self.kernel.jail_ifaces[(RTR.jail, QR)]["inet6s"]
+        )
+        self.assertEqual(
+            {
+                ("0.0.0.0/0", "203.0.113.1"),
+                ("::/0", "fe80::1%" + QG),
+                ("2001:db8:7::/64", "2001:db8:1::7"),
+            },
+            self.kernel.routes[RTR.jail],
+        )
+        (argv,) = self.kernel.rtadvd.values()
+        self.assertEqual(QR, argv[-1])
+        self.assertIn("-s", argv)
+        conf = os.path.join(self.tmp.name, "l3", ROUTER_ID, f"rtadvd-{QR}.conf")
+        with open(conf) as f:
+            self.assertIn('addr0="2001:db8:1::"', f.read())
+        self.assertEqual([], [r.op for r in self._reconcile([RTR6]).receipts])
+
+    def test_changed_prefix_reloads_rtadvd(self):
+        self._reconcile([RTR6])
+        stateful = router.Prefix(cidr="2001:db8:1::/64", mode="dhcpv6-stateful")
+        changed = router.Router(
+            id=ROUTER_ID,
+            gateway=GW6,
+            interfaces=(dataclasses.replace(INT6, prefixes=(stateful,)),),
+            floating_ips=(),
+            routes=RTR6.routes,
+        )
+        result = self._reconcile([changed])
+        self.assertEqual(["ReloadRtadvd"], [r.op for r in result.receipts])
+        self.assertEqual([("-HUP", RTADVD_PID)], self.kernel.signals)
+
+    def test_rtadvd_stops_when_no_prefix_is_left(self):
+        self._reconcile([RTR6])
+        quiet = router.Router(
+            id=ROUTER_ID,
+            gateway=GW6,
+            interfaces=(dataclasses.replace(INT6, prefixes=()),),
+            floating_ips=(),
+            routes=RTR6.routes,
+        )
+        result = self._reconcile([quiet])
+        self.assertEqual(["StopRtadvd"], [r.op for r in result.receipts])
+        self.assertEqual({}, self.kernel.rtadvd)
+        self.assertEqual([], [r.op for r in self._reconcile([quiet]).receipts])
+
+    def test_second_advertising_interface_leaves_the_first_running(self):
+        self._reconcile([RTR6])
+        other = router.Port(
+            id="cccc1111-2222-3333-4444-555566667777",
+            mac="fa:16:3e:00:00:30",
+            ips=(("2001:db8:2::1", 64),),
+            cidrs=(),
+            prefixes=(router.Prefix(cidr="2001:db8:2::/64", mode="slaac"),),
+        )
+        both = dataclasses.replace(RTR6, interfaces=(INT6, other))
+        result = self._reconcile([both])
+        self.assertEqual(1, [r.op for r in result.receipts].count("StartRtadvd"))
+        self.assertEqual([], self.kernel.signals)
+        self.assertEqual(2, len(self.kernel.rtadvd))
+
     def test_forwarding_drift_is_reset(self):
         self._reconcile([RTR])
         self.kernel.forwarding[RTR.jail] = "0"
@@ -262,4 +387,19 @@ class ParseTestCase(unittest.TestCase):
                 ("192.168.9.9/32", "10.0.0.9"),
             },
             l3_reconcile.parse_routes(text),
+        )
+
+    def test_parse_routes_reads_the_inet6_table(self):
+        text = (
+            "Routing tables\n\nInternet6:\n"
+            "Destination                       Gateway                       Flags\n"
+            "::1                               link#11                       UHS\n"
+            "default                           fe80::1%qg-aa                 UGS\n"
+            "2001:db8:1::/64                   link#13                       U\n"
+            "2001:db8:7::/64                   2001:db8:1::7                 UGS\n"
+            "fe80::%qr-bb/64                   link#13                       U\n"
+        )
+        self.assertEqual(
+            {("::/0", "fe80::1%qg-aa"), ("2001:db8:7::/64", "2001:db8:1::7")},
+            l3_reconcile.parse_routes(text, "inet6"),
         )

@@ -1,5 +1,7 @@
 """VNET jail and epair plumbing shared by the dhcp and l3 reconcilers."""
 
+import ipaddress
+
 from neutron_bsdbridge import constants, ifconfig
 from neutron_bsdbridge.constants import IFCONFIG, JAIL, JEXEC, JLS, PKILL
 from neutron_bsdbridge.utils import Receipt, default_run
@@ -137,7 +139,7 @@ def ensure_epair(acts, jail, host_if, jail_if, port_id, group, host_ifs):
 
 
 def ensure_addrs(acts, jail, jail_if, jail_if_text, mac, ips):
-    """Set a jail interface's mac and inet addresses on drift only."""
+    """Set a jail interface's mac and addresses on drift only."""
     # ether and inet cannot share one ifconfig invocation or the mac
     # is silently not set
     info = ifconfig.parse(jail_if_text or "").get(jail_if)
@@ -145,6 +147,8 @@ def ensure_addrs(acts, jail, jail_if, jail_if_text, mac, ips):
         return
     if info.ether != mac:
         acts.do("SetJailIfMac", (JEXEC, jail, IFCONFIG, jail_if, "ether", mac))
+    ips6 = {(str(ipaddress.ip_address(a)), p) for a, p in ips if ":" in a}
+    ips = [(a, p) for a, p in ips if ":" not in a]
     have = set(info.inets)
     first = not info.inets
     for addr, prefixlen in ips:
@@ -158,6 +162,17 @@ def ensure_addrs(acts, jail, jail_if, jail_if_text, mac, ips):
         acts.do(
             "DropJailIfInet",
             (JEXEC, jail, IFCONFIG, jail_if, "inet", f"{addr}/{prefixlen}", "-alias"),
+        )
+    have6 = {(str(ipaddress.ip_address(a)), p) for a, p in info.inet6s}
+    for addr, prefixlen in sorted(ips6 - have6):
+        acts.do(
+            "SetJailIfInet6",
+            (JEXEC, jail, IFCONFIG, jail_if, "inet6", f"{addr}/{prefixlen}", "alias"),
+        )
+    for addr, _prefixlen in sorted(have6 - ips6):
+        acts.do(
+            "DropJailIfInet6",
+            (JEXEC, jail, IFCONFIG, jail_if, "inet6", addr, "-alias"),
         )
 
 

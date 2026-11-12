@@ -11,6 +11,7 @@ IFNAME_MAX = 15
 
 ACTION_RE = re.compile(r"pass|block")
 PROTO_RE = re.compile(r"tcp|udp|icmp|icmp6")
+FAMILY_RE = re.compile(r"inet|inet6")
 TYPE_RE = re.compile(r"tap|epair")
 
 
@@ -214,15 +215,19 @@ class Segment(Model):
 
 @dataclasses.dataclass
 class Bind(Model):
-    """Port security for one member: the locked MAC and address."""
+    """Port security for one member: the locked MAC and addresses."""
 
     mac: str
-    address: str
+    address: str | None = None
+    addresses6: list[str] = dataclasses.field(default_factory=list)
 
     def __post_init__(self):
-        """Canonicalize the MAC and validate the address shape."""
+        """Canonicalize the MAC and validate the address shapes."""
         self.mac = canonical_mac(self.mac)
-        check_str(self, "address")
+        if self.address is not None:
+            check_str(self, "address")
+        check_str_list(self, "addresses6")
+        self.addresses6 = sorted(set(self.addresses6))
 
 
 @dataclasses.dataclass
@@ -274,20 +279,32 @@ class Bridge(Model):
 class FilterRule(Model):
     """One first-match filter rule."""
 
-    _aliases: ClassVar[dict] = {"from": "from_"}
+    _aliases: ClassVar[dict] = {
+        "from": "from_",
+        "icmp-type": "icmp_type",
+        "icmp-code": "icmp_code",
+    }
 
     action: str
+    family: str | None = None
     proto: str | None = None
     port: int | str | None = None
+    icmp_type: int | None = None
+    icmp_code: int | None = None
     from_: str = "any"
     to: str = "any"
 
     def __post_init__(self):
         """Validate the closed vocabularies and canonicalize the port."""
         check_str(self, "action", pattern=ACTION_RE)
+        if self.family is not None:
+            check_str(self, "family", pattern=FAMILY_RE)
         if self.proto is not None:
             check_str(self, "proto", pattern=PROTO_RE)
         self.port = canonical_port(self.port)
+        for name in ("icmp_type", "icmp_code"):
+            if getattr(self, name) is not None:
+                check_int(self, name, ge=0, le=255)
         check_str(self, "from_")
         check_str(self, "to")
 

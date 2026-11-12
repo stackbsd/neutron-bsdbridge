@@ -413,6 +413,72 @@ class FamilyTestCase(unittest.TestCase):
         self.assertIn("inet6 proto icmp6", text)
         self.assertNotIn("inet proto icmp6", text)
 
+    def test_family_renders_without_a_protocol(self):
+        """A rule for every protocol of one family names only the family."""
+        f = make_filter(**{"out": {"10": {"action": "pass", "family": "inet6"}}})
+        text, _ = pf.render("tap0", f)
+        self.assertIn("pass in quick on tap0 inet6 all keep state", text)
+
+    def test_ipv6_tcp_renders_inet6(self):
+        """A tcp rule with the inet6 family is not forced to inet."""
+        rule = {"action": "pass", "family": "inet6", "proto": "tcp", "port": 22}
+        text, _ = pf.render("tap0", make_filter(**{"in": {"10": rule}}))
+        self.assertIn("inet6 proto tcp from any to any port 22", text)
+
+    def test_icmp_type_and_code_render(self):
+        """An icmp rule renders its type and code in the protocol's spelling."""
+        rules = {
+            "10": {"action": "pass", "proto": "icmp", "icmp-type": 3, "icmp-code": 4},
+            "20": {"action": "pass", "proto": "icmp6", "icmp-type": 135},
+        }
+        text, _ = pf.render("tap0", make_filter(**{"in": rules}))
+        self.assertIn("inet proto icmp from any to any icmp-type 3 code 4", text)
+        self.assertIn("inet6 proto icmp6 from any to any icmp6-type 135", text)
+
+
+class Source6TestCase(unittest.TestCase):
+    """IPv6 half of the port-security source lock."""
+
+    def render(self, **kwargs):
+        """Render a bind-only anchor."""
+        bind = model.Bind(mac="aa:bb:cc:dd:ee:ff", **kwargs)
+        return pf.render("tap0", None, bind)
+
+    def test_sources_are_locked_to_the_table(self):
+        """IPv6 from the workload must come from its own addresses."""
+        text, _ = self.render(addresses6=["fe80::1", "2001:db8::5"])
+        self.assertIn("table <source6> const { 2001:db8::5, fe80::1 }", text)
+        self.assertIn("block drop in quick on tap0 inet6 from ! <source6>", text)
+
+    def test_address_detection_passes_before_the_lock(self):
+        """The unspecified-source neighbor solicitation is not locked out."""
+        lines = self.render(addresses6=["fe80::1"])[0].splitlines()
+        dad = next(i for i, line in enumerate(lines) if "from :: to ff02::/16" in line)
+        lock = next(i for i, line in enumerate(lines) if "from ! <source6>" in line)
+        self.assertLess(dad, lock)
+
+    def test_workload_cannot_act_as_router_or_dhcpv6_server(self):
+        """Router advertisements and dhcpv6 replies from the port are dropped."""
+        text, _ = self.render(addresses6=["fe80::1"])
+        self.assertIn("icmp6-type routeradv", text)
+        self.assertIn("from any port 547 to any port 546", text)
+
+    def test_port_without_an_ipv4_address_sends_no_ipv4(self):
+        """A bind with only IPv6 addresses drops every IPv4 packet sent."""
+        text, _ = self.render(addresses6=["fe80::1"])
+        self.assertIn("block drop in quick on tap0 inet all", text)
+
+    def test_addresses_change_the_hash(self):
+        """A changed IPv6 address reloads the anchor."""
+        _, h1 = self.render(addresses6=["fe80::1"])
+        _, h2 = self.render(addresses6=["fe80::1", "2001:db8::5"])
+        self.assertNotEqual(h1, h2)
+
+    def test_ipv4_only_bind_is_unchanged(self):
+        """A bind with no IPv6 addresses renders no IPv6 lock."""
+        text, _ = self.render(address="10.0.0.5")
+        self.assertNotIn("inet6", text)
+
 
 class StateLabelTestCase(unittest.TestCase):
     """State labels on rendered rules."""

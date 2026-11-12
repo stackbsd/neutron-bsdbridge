@@ -149,36 +149,123 @@ class DesiredTestCase(unittest.TestCase):
         self.assertEqual("192.0.2.0/24", dns[0].to)
         self.assertEqual("any", dns[0].from_)
 
-    def test_ipv6_tcp_is_skipped_fail_closed(self):
+    def _build_with_rules(self, rules, member_ips=None, **port_kw):
         info = {
             "devices": {
-                "3fb01977-a4e2-4a28-9a6f-1f0a3a2b4c5d": {"security_groups": ["sg-one"]}
+                "3fb01977-a4e2-4a28-9a6f-1f0a3a2b4c5d": {"security_groups": ["sg-v6"]}
             },
-            "security_groups": {
-                "sg-one": [
-                    {
-                        "direction": "ingress",
-                        "ethertype": "IPv6",
-                        "protocol": "tcp",
-                        "port_range_min": 80,
-                        "port_range_max": 80,
-                    }
-                ]
-            },
-            "sg_member_ips": {},
+            "security_groups": {"sg-v6": rules},
+            "sg_member_ips": member_ips or {},
         }
-        cfg, _ = port_config.build([port()], info, {})
+        cfg, _ = port_config.build([port(**port_kw)], info, {})
+        return cfg
+
+    def _sg_rules(self, cfg, direction="in_"):
         f = cfg.filter[names.filter_name("3fb01977-a4e2-4a28-9a6f-1f0a3a2b4c5d")]
-        sg_rules = {k: v for k, v in f.in_.items() if k >= 100}
-        self.assertEqual({}, sg_rules)
+        return [v for k, v in sorted(getattr(f, direction).items()) if k >= 100]
+
+    def test_ipv6_tcp_rule_carries_its_family(self):
+        cfg = self._build_with_rules(
+            [
+                {
+                    "direction": "ingress",
+                    "ethertype": "IPv6",
+                    "protocol": "tcp",
+                    "port_range_min": 80,
+                    "port_range_max": 80,
+                    "source_ip_prefix": "2001:db8::/64",
+                }
+            ]
+        )
+        (rule,) = self._sg_rules(cfg)
+        self.assertEqual("inet6", rule.family)
+        self.assertEqual("tcp", rule.proto)
+        self.assertEqual(80, rule.port)
+        self.assertEqual("2001:db8::/64", rule.from_)
+
+    def test_any_protocol_rule_is_limited_to_its_ethertype(self):
+        cfg = self._build_with_rules([{"direction": "egress", "ethertype": "IPv4"}])
+        (rule,) = self._sg_rules(cfg, "out")
+        self.assertEqual("inet", rule.family)
+        self.assertIsNone(rule.proto)
+
+    def test_icmp_type_and_code_come_from_the_port_range(self):
+        cfg = self._build_with_rules(
+            [
+                {
+                    "direction": "ingress",
+                    "ethertype": "IPv4",
+                    "protocol": "icmp",
+                    "port_range_min": 0,
+                    "port_range_max": 0,
+                },
+                {
+                    "direction": "ingress",
+                    "ethertype": "IPv6",
+                    "protocol": "icmp",
+                    "port_range_min": 128,
+                },
+            ]
+        )
+        v4, v6 = sorted(self._sg_rules(cfg), key=lambda r: r.family)
+        self.assertEqual(("icmp", 0, 0), (v4.proto, v4.icmp_type, v4.icmp_code))
+        self.assertEqual(("icmp6", 128, None), (v6.proto, v6.icmp_type, v6.icmp_code))
+        self.assertIsNone(v4.port)
+
+    def test_remote_group_table_holds_both_families(self):
+        cfg = self._build_with_rules(
+            [{"direction": "ingress", "ethertype": "IPv6", "remote_group_id": "sg-v6"}],
+            member_ips={
+                "sg-v6": {
+                    "IPv4": [("10.99.0.5", None)],
+                    "IPv6": [("2001:db8::5", None)],
+                }
+            },
+        )
+        self.assertEqual(
+            ["10.99.0.5", "2001:db8::5"],
+            cfg.table[names.table_name("sg-v6")].members,
+        )
+
+    def test_bind_locks_ipv6_sources_to_fixed_and_link_local(self):
+        cfg = self._build_with_rules(
+            [],
+            fixed_ips=[
+                {"subnet_id": "s1", "ip_address": "10.99.0.5"},
+                {"subnet_id": "s2", "ip_address": "2001:db8::5"},
+            ],
+        )
+        bind = next(iter(cfg.bridge.values())).member["tap3fb01977-a4"].bind
+        self.assertEqual("10.99.0.5", bind.address)
+        self.assertEqual(["2001:db8::5", "fe80::f816:3eff:feaa:bb01"], bind.addresses6)
+
+    def test_ipv6_only_port_is_bound_without_an_ipv4_address(self):
+        cfg = self._build_with_rules(
+            [], fixed_ips=[{"subnet_id": "s2", "ip_address": "2001:db8::5"}]
+        )
+        bind = next(iter(cfg.bridge.values())).member["tap3fb01977-a4"].bind
+        self.assertIsNone(bind.address)
+        self.assertEqual("fa:16:3e:aa:bb:01", bind.mac)
 
     def test_infra_allowances_are_visible_rules(self):
         f = self._filter()
-        self.assertEqual("udp", f.in_[10].proto)
-        self.assertEqual(68, f.in_[10].port)
-        self.assertEqual("udp", f.out[10].proto)
+        self.assertEqual(
+            ("inet", "udp", 68), (f.in_[10].family, f.in_[10].proto, f.in_[10].port)
+        )
+        self.assertEqual(
+            ("inet6", "udp", 546), (f.in_[20].family, f.in_[20].proto, f.in_[20].port)
+        )
         self.assertEqual(67, f.out[10].port)
-        self.assertEqual("icmp6", f.in_[20].proto)
+        self.assertEqual(547, f.out[20].port)
+        infra_in = [r.icmp_type for k, r in sorted(f.in_.items()) if 20 < k < 100]
+        infra_out = [r.icmp_type for k, r in sorted(f.out.items()) if 20 < k < 100]
+        self.assertEqual([130, 134, 135, 136], infra_in)
+        self.assertEqual([131, 132, 133, 135, 136, 143], infra_out)
+
+    def test_infra_allowances_do_not_pass_echo(self):
+        f = self._filter()
+        infra = [r for k, r in f.in_.items() if k < 100 and r.proto == "icmp6"]
+        self.assertTrue(all(r.icmp_type is not None for r in infra))
 
     def test_two_ports_one_network_share_the_bridge_stanza(self):
         p2 = port(port_id="99999999-4bd1-4b58-a52e-b0b8ab779b74")

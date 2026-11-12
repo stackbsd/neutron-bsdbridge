@@ -15,6 +15,7 @@ from neutron.agent import rpc as agent_rpc
 from neutron.common import config as common_config
 from neutron.conf import service as service_config
 from neutron.conf.agent import common as agent_common_config
+from neutron_lib import constants as lib_constants
 from neutron_lib import context as n_context
 from neutron_lib import rpc as n_rpc
 from neutron_lib.agent import topics
@@ -33,6 +34,21 @@ bsdbridge_config.register()
 
 class ReconcileError(Exception):
     """A dhcp reconcile pass left failed receipts."""
+
+
+def stateless(subnet):
+    """Report whether a subnet's addresses come from router advertisements."""
+    return subnet.get("ipv6_address_mode") == lib_constants.DHCPV6_STATELESS
+
+
+def needs_dhcp(subnet):
+    """Report whether a subnet needs a dhcp server."""
+    if subnet.get("ip_version") == 4:
+        return True
+    address_mode = subnet.get("ipv6_address_mode")
+    if address_mode in (lib_constants.DHCPV6_STATEFUL, lib_constants.DHCPV6_STATELESS):
+        return True
+    return not address_mode and not subnet.get("ipv6_ra_mode")
 
 
 class DhcpPluginApi:
@@ -164,9 +180,9 @@ class BsdBridgeDhcpAgent:
                 return port
         return None
 
-    def _ensure_port(self, net, v4_subnets):
+    def _ensure_port(self, net, served):
         """Return this network's dhcp port, creating or refitting it."""
-        wanted = sorted(s["id"] for s in v4_subnets)
+        wanted = sorted(s["id"] for s in served)
         port = self._own_port(net)
         if port is None:
             LOG.info("creating dhcp port for network %s", net["id"])
@@ -192,8 +208,13 @@ class BsdBridgeDhcpAgent:
                 if f["subnet_id"] in set(wanted)
             }
         )
-        all_have = sorted({f["subnet_id"] for f in port.get("fixed_ips", [])})
-        if have != wanted or all_have != wanted:
+        # the server adds an address on every slaac subnet by itself
+        stale = [
+            f
+            for f in port.get("fixed_ips", [])
+            if f["subnet_id"] not in set(wanted) and ":" not in f["ip_address"]
+        ]
+        if have != wanted or stale:
             LOG.info("refitting dhcp port %s to subnets %s", port["id"], wanted)
             updated = self.plugin_rpc.update_dhcp_port(
                 port["id"],
@@ -208,9 +229,9 @@ class BsdBridgeDhcpAgent:
                 port = updated
         return port
 
-    def _spec_for(self, net, v4_subnets, port):
+    def _spec_for(self, net, served, port):
         """Build the DhcpNetwork spec one network reconciles to."""
-        subnet_by_id = {s["id"]: s for s in v4_subnets}
+        subnet_by_id = {s["id"]: s for s in served}
         ips = []
         for fixed in port.get("fixed_ips", []):
             subnet = subnet_by_id.get(fixed["subnet_id"])
@@ -226,9 +247,8 @@ class BsdBridgeDhcpAgent:
             if not other.get("mac_address"):
                 continue
             for fixed in other.get("fixed_ips", []):
-                if fixed["subnet_id"] not in subnet_by_id:
-                    continue
-                if ":" in fixed["ip_address"]:
+                subnet = subnet_by_id.get(fixed["subnet_id"])
+                if subnet is None or stateless(subnet):
                     continue
                 hosts.append(
                     dnsmasq_mod.HostEntry(
@@ -242,7 +262,7 @@ class BsdBridgeDhcpAgent:
                 gateway_ip=s.get("gateway_ip"),
                 dns=tuple(s.get("dns_nameservers") or ()),
             )
-            for s in v4_subnets
+            for s in served
         )
         return dnsmasq_mod.DhcpNetwork(
             network_id=net["id"],
@@ -259,24 +279,27 @@ class BsdBridgeDhcpAgent:
         desired = []
         ready = set()
         for net in networks:
-            v4 = [s for s in net.get("subnets", []) if s.get("ip_version") == 4]
-            if not v4 or not net.get("admin_state_up", True):
+            subnets = net.get("subnets", [])
+            served = [s for s in subnets if needs_dhcp(s)]
+            if net.get("admin_state_up", True):
+                # a port on a slaac subnet waits on this report as well
+                subnet_ids = {s["id"] for s in subnets}
+                ready |= {
+                    p["id"]
+                    for p in net.get("ports", [])
+                    if any(f["subnet_id"] in subnet_ids for f in p.get("fixed_ips", []))
+                }
+            if not served or not net.get("admin_state_up", True):
                 if self._own_port(net) is not None:
                     LOG.info("releasing dhcp port on %s", net["id"])
                     self.plugin_rpc.release_dhcp_port(
                         net["id"], names.dhcp_device_id(net["id"], self.host)
                     )
                 continue
-            port = self._ensure_port(net, v4)
+            port = self._ensure_port(net, served)
             if port is None:
                 continue
-            desired.append(self._spec_for(net, v4, port))
-            v4_ids = {s["id"] for s in v4}
-            ready |= {
-                p["id"]
-                for p in net.get("ports", [])
-                if any(f["subnet_id"] in v4_ids for f in p.get("fixed_ips", []))
-            }
+            desired.append(self._spec_for(net, served, port))
 
         result = self._reconcile(
             desired,

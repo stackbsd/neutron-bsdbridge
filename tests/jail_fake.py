@@ -28,6 +28,10 @@ class FakeKernel:
         ]
         for addr, prefixlen in entry["inets"]:
             lines.append(f"\tinet {addr} netmask {netmask(prefixlen)}")
+        for addr, prefixlen in entry["inet6s"]:
+            lines.append(f"\tinet6 {addr} prefixlen {prefixlen}")
+        if entry["inet6s"]:
+            lines.append(f"\tinet6 fe80::1%{name} prefixlen 64 scopeid 0x3")
         lines.append("\tgroups: epair")
         return "\n".join(lines) + "\n"
 
@@ -125,6 +129,7 @@ class FakeKernel:
                 self.jail_ifaces[(rest[1], name)] = {
                     "mac": "58:9c:fc:00:00:99",
                     "inets": [],
+                    "inet6s": [],
                 }
                 return 0, "", ""
         else:
@@ -149,5 +154,13 @@ class FakeKernel:
                     self.jail_ifaces[key]["inets"].remove(entry)
                 else:
                     self.jail_ifaces[key]["inets"].append(entry)
+                return 0, "", ""
+            if rest[0] == "inet6":
+                addr, _, prefixlen = rest[1].partition("/")
+                inet6s = self.jail_ifaces[key]["inet6s"]
+                if rest[2:3] == ("-alias",):
+                    inet6s[:] = [e for e in inet6s if e[0] != addr]
+                else:
+                    inet6s.append((addr, int(prefixlen)))
                 return 0, "", ""
         raise AssertionError(f"unscripted ifconfig: {args} jail={jail_name}")

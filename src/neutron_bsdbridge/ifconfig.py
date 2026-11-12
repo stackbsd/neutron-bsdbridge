@@ -15,6 +15,7 @@ VLAN_RE = re.compile(r"^\s+vlan: (?P<vid>\d+) .*parent interface: (?P<parent>\S+
 MAXADDR_RE = re.compile(r"\bmaxaddr (?P<maxaddr>\d+)\b")
 ETHER_RE = re.compile(r"^\s+ether (?P<ether>[0-9a-f:]{17})")
 INET_RE = re.compile(r"^\s+inet (?P<addr>\S+) netmask (?P<mask>0x[0-9a-f]{8})")
+INET6_RE = re.compile(r"^\s+inet6 (?P<addr>[0-9a-f:]+) prefixlen (?P<prefixlen>\d+)")
 GROUPS_RE = re.compile(r"^\s+groups: (?P<groups>.+)$")
 DESCR_RE = re.compile(r"^\s+description: (?P<descr>.*)$")
 STATUS_RE = re.compile(r"^\s+status: (?P<status>.+)$")
@@ -30,6 +31,7 @@ class Interface:
     metric: int | None = None
     ether: str | None = None
     inets: tuple = ()
+    inet6s: tuple = ()
     description: str = ""
     groups: tuple = ()
     status: str | None = None
@@ -109,6 +111,7 @@ def parse_block(lines):
     }
     members = []
     inets = []
+    inet6s = []
     for line in lines[1:]:
         m = MEMBER_RE.match(line)
         if m:
@@ -118,6 +121,11 @@ def parse_block(lines):
         if m:
             prefixlen = bin(int(m.group("mask"), 16)).count("1")
             inets.append((m.group("addr"), prefixlen))
+            continue
+        # a scoped address fails the match, which leaves link-locals out
+        m = INET6_RE.match(line)
+        if m:
+            inet6s.append((m.group("addr"), int(m.group("prefixlen"))))
             continue
         m = VLAN_RE.match(line)
         if m:
@@ -147,6 +155,7 @@ def parse_block(lines):
         fields["description"] = fields.pop("descr")
     fields["members"] = tuple(members)
     fields["inets"] = tuple(inets)
+    fields["inet6s"] = tuple(inet6s)
     return Interface(**fields)
 
 

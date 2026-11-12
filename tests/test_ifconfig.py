@@ -227,6 +227,12 @@ class InetTestCase(unittest.TestCase):
         i = ifconfig.parse(sample("ifconfig-plain-nic.txt"))["vtnet0"]
         self.assertEqual((("192.168.50.150", 24),), i.inets)
 
+    def test_inet6_lines_parse_without_the_link_local(self):
+        """Inet6 lines parse to pairs and the scoped link-local is left out."""
+        i = ifconfig.parse(sample("ifconfig-jail-inet6.txt"))["qr-44715559-18"]
+        self.assertEqual((("2001:db8:a::", 64),), i.inet6s)
+        self.assertEqual((), i.inets)
+
     def test_interfaces_without_inet_parse_empty(self):
         """A tap without addresses parses with no inets."""
         i = ifconfig.parse(sample("ifconfig-tap-member.txt"))["tapdeadbeef-00"]
