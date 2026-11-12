@@ -92,14 +92,86 @@ class FromRpcTestCase(unittest.TestCase):
         )
         self.assertEqual((r.interfaces[0],), r.ports)
 
-    def test_ipv6_only_interface_is_skipped(self):
+    def test_ipv6_interface_carries_its_address_and_prefix(self):
         v6 = int_port(
             id="cccc1111-2222-3333-4444-555566667777",
             fixed_ips=[{"subnet_id": "v6", "ip_address": "fd00::1"}],
-            subnets=[{"id": "v6", "cidr": "fd00::/64", "gateway_ip": "fd00::1"}],
+            subnets=[
+                {
+                    "id": "v6",
+                    "cidr": "fd00::/64",
+                    "gateway_ip": "fd00::1",
+                    "ipv6_ra_mode": "dhcpv6-stateless",
+                    "dns_nameservers": ["fd00::53"],
+                }
+            ],
         )
         r = router.from_rpc(rpc_router(_interfaces=[int_port(), v6]))
-        self.assertEqual([INT_PORT_ID], [p.id for p in r.interfaces])
+        port = r.interfaces[1]
+        self.assertEqual((("fd00::1", 64),), port.ips)
+        self.assertEqual((), port.cidrs)
+        self.assertEqual(
+            (
+                router.Prefix(
+                    cidr="fd00::/64", mode="dhcpv6-stateless", dns=("fd00::53",)
+                ),
+            ),
+            port.prefixes,
+        )
+
+    def test_subnet_without_ra_mode_is_not_advertised(self):
+        v6 = int_port(
+            fixed_ips=[{"subnet_id": "v6", "ip_address": "fd00::1"}],
+            subnets=[{"id": "v6", "cidr": "fd00::/64", "ipv6_ra_mode": None}],
+        )
+        r = router.from_rpc(rpc_router(_interfaces=[v6]))
+        self.assertEqual((), r.interfaces[0].prefixes)
+        self.assertEqual({}, router.rtadvd_confs(r))
+
+    def test_dual_stack_gateway_has_a_default_route_per_family(self):
+        gw = gw_port(
+            fixed_ips=[
+                {"subnet_id": EXT_SUBNET, "ip_address": "203.0.113.10"},
+                {"subnet_id": "ext6", "ip_address": "2001:db8:ffff::10"},
+            ],
+            subnets=[
+                {
+                    "id": EXT_SUBNET,
+                    "cidr": "203.0.113.0/24",
+                    "gateway_ip": "203.0.113.1",
+                },
+                {
+                    "id": "ext6",
+                    "cidr": "2001:db8:ffff::/64",
+                    "gateway_ip": "2001:db8:ffff::1",
+                },
+            ],
+        )
+        r = router.from_rpc(rpc_router(gw_port=gw, routes=[]))
+        self.assertEqual(
+            (("0.0.0.0/0", "203.0.113.1"), ("::/0", "2001:db8:ffff::1")),
+            router.routes(r),
+        )
+        self.assertNotIn("2001:db8", router.pf_text(r)[0])
+
+    def test_rtadvd_text_sets_flags_by_mode(self):
+        def text_for(mode):
+            v6 = int_port(
+                fixed_ips=[{"subnet_id": "v6", "ip_address": "fd00::1"}],
+                subnets=[{"id": "v6", "cidr": "fd00::/64", "ipv6_ra_mode": mode}],
+            )
+            confs = router.rtadvd_confs(router.from_rpc(rpc_router(_interfaces=[v6])))
+            return confs[qr]
+
+        qr = names.router_jail_if_name(INT_PORT_ID)
+        self.assertEqual(
+            f'{qr}:\\\n\t:raflags#0:addr0="fd00::":prefixlen0#64:pinfoflags0="la":\n',
+            text_for("slaac"),
+        )
+        self.assertIn('raflags="o"', text_for("dhcpv6-stateless"))
+        stateful = text_for("dhcpv6-stateful")
+        self.assertIn('raflags="m"', stateful)
+        self.assertIn('pinfoflags0="l":', stateful)
 
     def test_unassociated_floating_ip_is_skipped(self):
         r = router.from_rpc(rpc_router(_floatingips=[fip(fixed_ip_address=None)]))

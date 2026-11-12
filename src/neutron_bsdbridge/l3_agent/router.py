@@ -9,6 +9,19 @@ from neutron_bsdbridge import names
 
 CFG_LABEL = "l3-neutron:cfg:"
 DEFAULT_ROUTE = "0.0.0.0/0"
+DEFAULT_ROUTE6 = "::/0"
+STATEFUL = "dhcpv6-stateful"
+STATELESS = "dhcpv6-stateless"
+RDNSS_MAX = 3
+
+
+@dataclasses.dataclass(frozen=True)
+class Prefix:
+    """One IPv6 prefix a router port advertises."""
+
+    cidr: str
+    mode: str
+    dns: tuple = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -20,6 +33,8 @@ class Port:
     ips: tuple
     cidrs: tuple
     gateway_ip: str | None = None
+    gateway_ip6: str | None = None
+    prefixes: tuple = ()
 
     @property
     def host_if(self):
@@ -68,26 +83,38 @@ def state_dir(base, router_id):
 
 
 def port_from_rpc(port):
-    """Build a Port from a router port dict, or None without an IPv4 address."""
+    """Build a Port from a router port dict, or None without an address."""
     subnets = {s["id"]: s for s in port.get("subnets", [])}
     ips = []
-    gateway_ip = None
+    gateways = {}
     for fixed in port.get("fixed_ips", []):
         subnet = subnets.get(fixed["subnet_id"])
-        if subnet is None or ":" in fixed["ip_address"]:
+        if subnet is None:
             continue
         ips.append((fixed["ip_address"], int(subnet["cidr"].split("/")[1])))
-        if gateway_ip is None:
-            gateway_ip = subnet.get("gateway_ip")
+        if subnet.get("gateway_ip"):
+            family = "inet6" if ":" in subnet["cidr"] else "inet"
+            gateways.setdefault(family, subnet["gateway_ip"])
     if not ips:
         return None
     cidrs = tuple(sorted(s["cidr"] for s in subnets.values() if ":" not in s["cidr"]))
+    prefixes = tuple(
+        Prefix(
+            cidr=s["cidr"],
+            mode=s["ipv6_ra_mode"],
+            dns=tuple(d for d in s.get("dns_nameservers") or () if ":" in d),
+        )
+        for s in sorted(subnets.values(), key=lambda s: s["cidr"])
+        if ":" in s["cidr"] and s.get("ipv6_ra_mode")
+    )
     return Port(
         id=port["id"],
         mac=port["mac_address"].lower(),
         ips=tuple(ips),
         cidrs=cidrs,
-        gateway_ip=gateway_ip,
+        gateway_ip=gateways.get("inet"),
+        gateway_ip6=gateways.get("inet6"),
+        prefixes=prefixes,
     )
 
 
@@ -114,8 +141,6 @@ def from_rpc(router):
     fips.sort(key=lambda f: f.floating)
     routes = []
     for route in router.get("routes", []):
-        if ":" in route["destination"] or ":" in route["nexthop"]:
-            continue
         routes.append((normalize_destination(route["destination"]), route["nexthop"]))
     gw_info = router.get("external_gateway_info") or {}
     return Router(
@@ -129,7 +154,7 @@ def from_rpc(router):
 
 
 def normalize_destination(text):
-    """Return a route destination as a canonical IPv4 prefix string."""
+    """Return a route destination as a canonical prefix string."""
     if text == "default":
         return DEFAULT_ROUTE
     return str(ipaddress.ip_network(text, strict=False))
@@ -149,10 +174,41 @@ def addresses(router):
 def routes(router):
     """Return the gateway routes the jail must carry as (destination, nexthop)."""
     wanted = []
-    if router.gateway is not None and router.gateway.gateway_ip:
-        wanted.append((DEFAULT_ROUTE, router.gateway.gateway_ip))
+    gateway = router.gateway
+    if gateway is not None and gateway.gateway_ip:
+        wanted.append((DEFAULT_ROUTE, gateway.gateway_ip))
+    if gateway is not None and gateway.gateway_ip6:
+        nexthop = gateway.gateway_ip6
+        if ipaddress.ip_address(nexthop).is_link_local:
+            nexthop += "%" + router.jail_if(gateway)
+        wanted.append((DEFAULT_ROUTE6, nexthop))
     wanted.extend(router.routes)
     return tuple(sorted(set(wanted)))
+
+
+def rtadvd_confs(router):
+    """Return jail interface name to the rtadvd.conf it advertises from."""
+    confs = {}
+    for port in router.interfaces:
+        if not port.prefixes:
+            continue
+        modes = {prefix.mode for prefix in port.prefixes}
+        flags = ("m" if STATEFUL in modes else "") + ("o" if STATELESS in modes else "")
+        fields = [f'raflags="{flags}"' if flags else "raflags#0"]
+        for index, prefix in enumerate(port.prefixes):
+            network = ipaddress.ip_network(prefix.cidr)
+            pinfo = "l" if prefix.mode == STATEFUL else "la"
+            fields += [
+                f'addr{index}="{network.network_address}"',
+                f"prefixlen{index}#{network.prefixlen}",
+                f'pinfoflags{index}="{pinfo}"',
+            ]
+        dns = sorted({server for prefix in port.prefixes for server in prefix.dns})
+        if dns:
+            fields.append(f'rdnss="{",".join(dns[:RDNSS_MAX])}"')
+        jail_if = router.jail_if(port)
+        confs[jail_if] = f"{jail_if}:\\\n\t:{':'.join(fields)}:\n"
+    return confs
 
 
 def pf_text(router):

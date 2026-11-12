@@ -5,32 +5,64 @@ import re
 import shutil
 
 from neutron_bsdbridge import constants, jail
-from neutron_bsdbridge.constants import JEXEC, NETSTAT, PFCTL, ROUTE, SYSCTL
+from neutron_bsdbridge.constants import (
+    JEXEC,
+    KILL,
+    NETSTAT,
+    PFCTL,
+    PS,
+    ROUTE,
+    RTADVD,
+    SYSCTL,
+)
 from neutron_bsdbridge.l3_agent import router as router_mod
 from neutron_bsdbridge.utils import default_run, write_if_changed
 
-FORWARDING = "net.inet.ip.forwarding"
+FORWARDING = ("net.inet.ip.forwarding", "net.inet6.ip6.forwarding")
+FAMILIES = ("inet", "inet6")
+RTADVD_PREFIX = "rtadvd-"
 
 JAIL_RE = re.compile(r"^qrouter-[0-9a-f]{12}$")
 CFG_RE = re.compile(r'label "l3-neutron:cfg:(?P<hash>[0-9a-f]{16})"')
-ROUTE_RE = re.compile(r"^(?P<dest>\S+)\s+(?P<gw>\d+\.\d+\.\d+\.\d+)\s+(?P<flags>\S+)")
+ROUTE_RE = re.compile(
+    r"^(?P<dest>\S+)\s+(?P<gw>\d+\.\d+\.\d+\.\d+|[0-9a-f]*:[0-9a-f:]*(?:%\S+)?)"
+    r"\s+(?P<flags>\S+)"
+)
 PF_ENABLED_RE = re.compile(r"^Status: Enabled", re.M)
+DEFAULTS = {"inet": router_mod.DEFAULT_ROUTE, "inet6": router_mod.DEFAULT_ROUTE6}
 
 
-def parse_routes(text):
-    """Parse netstat -rn -f inet output into the (destination, nexthop) set."""
+def parse_routes(text, family="inet"):
+    """Parse netstat -rn output into the (destination, nexthop) set."""
     routes = set()
     for line in (text or "").splitlines():
         m = ROUTE_RE.match(line)
         if m is None or "G" not in m.group("flags"):
             continue
-        routes.add((router_mod.normalize_destination(m.group("dest")), m.group("gw")))
+        dest = m.group("dest")
+        if dest == "default":
+            dest = DEFAULTS[family]
+        routes.add((router_mod.normalize_destination(dest), m.group("gw")))
     return routes
 
 
-def route_arg(destination):
-    """Return a destination as route(8) spells it."""
-    return "default" if destination == router_mod.DEFAULT_ROUTE else destination
+def rtadvd_pid(run, path):
+    """Return the pid of the rtadvd a pidfile names if it is running."""
+    try:
+        with open(path) as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+    rc, out, _err = run((PS, "-p", str(pid), "-o", "command="))
+    return pid if rc == 0 and "rtadvd" in (out or "") else None
+
+
+def route_args(destination):
+    """Return a destination as route(8) spells it with its family."""
+    family = "-inet6" if ":" in destination else "-inet"
+    if destination in DEFAULTS.values():
+        return (family, "default")
+    return (family, destination)
 
 
 def reconcile(desired, base, run=default_run):
@@ -46,9 +78,10 @@ def reconcile(desired, base, run=default_run):
             continue
 
         # forwarding
-        rc, out, _err = run((JEXEC, rtr.jail, SYSCTL, "-n", FORWARDING))
-        if rc != 0 or (out or "").strip() != "1":
-            acts.do("EnableForwarding", (JEXEC, rtr.jail, SYSCTL, FORWARDING + "=1"))
+        for knob in FORWARDING:
+            rc, out, _err = run((JEXEC, rtr.jail, SYSCTL, "-n", knob))
+            if rc != 0 or (out or "").strip() != "1":
+                acts.do("EnableForwarding", (JEXEC, rtr.jail, SYSCTL, knob + "=1"))
 
         # ports
         addrs = router_mod.addresses(rtr)
@@ -71,19 +104,47 @@ def reconcile(desired, base, run=default_run):
 
         # routes: a route needs its interface, so only once every port exists
         if complete:
-            rc, out, _err = run((JEXEC, rtr.jail, NETSTAT, "-rn", "-f", "inet"))
-            have = parse_routes(out) if rc == 0 else set()
+            have = set()
+            for family in FAMILIES:
+                rc, out, _err = run((JEXEC, rtr.jail, NETSTAT, "-rn", "-f", family))
+                if rc == 0:
+                    have |= parse_routes(out, family)
             wanted = set(router_mod.routes(rtr))
             for dest, _gw in sorted(have - wanted):
                 acts.do(
                     "DeleteRoute",
-                    (JEXEC, rtr.jail, ROUTE, "-n", "delete", route_arg(dest)),
+                    (JEXEC, rtr.jail, ROUTE, "-n", "delete", *route_args(dest)),
                 )
             for dest, gw in sorted(wanted - have):
                 acts.do(
                     "AddRoute",
-                    (JEXEC, rtr.jail, ROUTE, "-n", "add", route_arg(dest), gw),
+                    (JEXEC, rtr.jail, ROUTE, "-n", "add", *route_args(dest), gw),
                 )
+
+        # rtadvd: one per interface, HUP on a changed file
+        if complete:
+            confs = router_mod.rtadvd_confs(rtr)
+            for jail_if, text in sorted(confs.items()):
+                stem = os.path.join(directory, RTADVD_PREFIX + jail_if)
+                dirty = write_if_changed(stem + ".conf", text)
+                pid = rtadvd_pid(run, stem + ".pid")
+                if pid is None:
+                    argv = (RTADVD, "-s", "-c", stem + ".conf", "-p", stem + ".pid")
+                    argv += ("-C", stem + ".sock", jail_if)
+                    acts.do("StartRtadvd", (JEXEC, rtr.jail, *argv))
+                elif dirty:
+                    acts.do("ReloadRtadvd", (KILL, "-HUP", str(pid)))
+            for name in sorted(os.listdir(directory)):
+                stem, ext = os.path.splitext(name)
+                if not stem.startswith(RTADVD_PREFIX) or ext != ".conf":
+                    continue
+                if stem[len(RTADVD_PREFIX) :] in confs:
+                    continue
+                stem = os.path.join(directory, stem)
+                pid = rtadvd_pid(run, stem + ".pid")
+                if pid is not None:
+                    acts.do("StopRtadvd", (KILL, str(pid)))
+                os.unlink(stem + ".conf")
 
         # pf: enable once, load on a changed hash
         text, cfg_hash = router_mod.pf_text(rtr)

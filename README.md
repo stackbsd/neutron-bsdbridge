@@ -12,20 +12,20 @@ Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD base
 - Port security
 - DHCP agent running one dnsmasq per network inside separate VNET jails
 - L3 agent running each router inside a VNET jail with SNAT and floating IPs
+- IPv6 subnets in SLAAC, DHCPv6 stateless and DHCPv6 stateful modes, with router advertisements from `rtadvd(8)` in the router jail
+- IPv6 security group rules and source address filtering
 
 ### Roadmap
 
 - vxlan segments
-- IPv6 tcp and udp security group rules
 - metadata agent
 - HA routers (CARP+pfsync)
 
 ### Limitations
 
-- IPv6 tcp and udp rules are skipped and this traffic stays blocked
 - ARP is not inspected
-- Only IPv4 subnets are served by the DHCP agent
-- Only IPv4 subnets, routes and floating IPs are handled by the L3 agent
+- A port with port security sends IPv6 only from its fixed addresses and the link-local address derived from its MAC
+- A router takes its IPv6 default route from the gateway of the external subnet, not from router advertisements
 - Distributed routers probably won't be supported
 
 ## Host requirements
@@ -79,3 +79,9 @@ network_vlan_ranges = physnet1:100:199
 
 Now any networks created in non-admin projects will be allocated a vlan segment automatically (the `ix0.<vid>` uplink is created and plugged by the L2 agent).
 Same as above, ensure that the network fabric actually trunks this range of VLAN IDs to the interface on each host which is mapped in `physical_interface_mappings`.
+
+## IPv6
+
+Tenant IPv6 subnets are routed without translation, so there is no SNAT and no floating IPs for IPv6.
+
+The external network has to route tenant prefixes to the router, either with static routes or with BGP using `neutron-dynamic-routing`.
