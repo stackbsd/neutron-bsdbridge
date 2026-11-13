@@ -250,6 +250,26 @@ class DesiredTestCase(unittest.TestCase):
         bind = next(iter(cfg.bridge.values())).member["tap3fb01977-a4"].bind
         self.assertEqual(["10.99.0.5", "10.99.0.6"], bind.addresses)
 
+    def test_bind_carries_the_allowed_address_pairs(self):
+        cfg = self._build_with_rules(
+            [],
+            allowed_address_pairs=[
+                {"ip_address": "192.0.2.0/24", "mac_address": "fa:16:3e:00:00:99"},
+                {"ip_address": "2001:db8::9", "mac_address": "fa:16:3e:aa:bb:01"},
+                {"ip_address": "0.0.0.0/0", "mac_address": "fa:16:3e:aa:bb:01"},
+            ],
+        )
+        bind = next(iter(cfg.bridge.values())).member["tap3fb01977-a4"].bind
+        self.assertEqual(["0.0.0.0/0", "192.0.2.0/24", "2001:db8::9"], bind.allowed)
+        self.assertEqual(["10.99.0.5"], bind.addresses)
+        self.assertEqual("fa:16:3e:aa:bb:01", bind.mac)
+
+    def test_port_without_allowed_address_pairs_allows_nothing_more(self):
+        for pairs in ({}, {"allowed_address_pairs": None}):
+            cfg = self._build_with_rules([], **pairs)
+            bind = next(iter(cfg.bridge.values())).member["tap3fb01977-a4"].bind
+            self.assertEqual([], bind.allowed)
+
     def test_ipv6_only_port_is_bound_without_an_ipv4_address(self):
         cfg = self._build_with_rules(
             [], fixed_ips=[{"subnet_id": "s2", "ip_address": "2001:db8::5"}]

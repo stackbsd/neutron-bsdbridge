@@ -484,6 +484,29 @@ class Source6TestCase(unittest.TestCase):
         _, h2 = self.render(addresses=["10.0.0.5", "10.0.0.6"])
         self.assertNotEqual(h1, h2)
 
+    def test_allowed_addresses_join_the_source_tables_by_family(self):
+        """An allowed address or CIDR is a source in its family's table."""
+        text, _ = self.render(
+            addresses=["10.0.0.5"],
+            addresses6=["fe80::1"],
+            allowed=["192.0.2.0/24", "10.0.0.5", "2001:db8:1::/64"],
+        )
+        self.assertIn("table <source4> const { 10.0.0.5, 192.0.2.0/24 }", text)
+        self.assertIn("table <source6> const { 2001:db8:1::/64, fe80::1 }", text)
+
+    def test_allowed_ipv4_address_opens_ipv4_on_an_ipv6_only_port(self):
+        """An IPv4 pair on a port without an IPv4 address is its only source."""
+        text, _ = self.render(addresses6=["fe80::1"], allowed=["10.0.0.9"])
+        self.assertIn("table <source4> const { 10.0.0.9 }", text)
+        self.assertIn("block drop in quick on tap0 inet from ! <source4>", text)
+        self.assertNotIn("block drop in quick on tap0 inet all", text)
+
+    def test_allowed_addresses_change_the_hash(self):
+        """A changed allowed address reloads the anchor."""
+        _, h1 = self.render(addresses=["10.0.0.5"])
+        _, h2 = self.render(addresses=["10.0.0.5"], allowed=["10.0.0.9"])
+        self.assertNotEqual(h1, h2)
+
     def test_addresses_change_the_hash(self):
         """A changed IPv6 address reloads the anchor."""
         _, h1 = self.render(addresses6=["fe80::1"])

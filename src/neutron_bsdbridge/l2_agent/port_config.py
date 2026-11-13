@@ -236,6 +236,10 @@ def build(ports, sg_info, interface_mappings, vxlan_conf=None, relay_ports=None)
                     "mac": port["mac_address"],
                     "addresses": v4,
                     "addresses6": [*v6, link_local(port["mac_address"])],
+                    "allowed": [
+                        str(pair["ip_address"])
+                        for pair in port.get("allowed_address_pairs") or []
+                    ],
                 }
         stanza["member"][tap] = member
 

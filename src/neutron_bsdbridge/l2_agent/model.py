@@ -237,11 +237,12 @@ class Bind(Model):
     mac: str
     addresses: list[str] = dataclasses.field(default_factory=list)
     addresses6: list[str] = dataclasses.field(default_factory=list)
+    allowed: list[str] = dataclasses.field(default_factory=list)
 
     def __post_init__(self):
         """Canonicalize the MAC and validate the address shapes."""
         self.mac = canonical_mac(self.mac)
-        for name in ("addresses", "addresses6"):
+        for name in ("addresses", "addresses6", "allowed"):
             check_str_list(self, name)
             setattr(self, name, sorted(set(getattr(self, name))))
 
