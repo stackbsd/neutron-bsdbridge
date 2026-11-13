@@ -86,7 +86,7 @@ class DesiredTestCase(unittest.TestCase):
         member = self.cfg.bridge[bridge].member["tap3fb01977-a4"]
         self.assertEqual("tap", member.type)
         self.assertEqual("fa:16:3e:aa:bb:01", member.bind.mac)
-        self.assertEqual("10.99.0.5", member.bind.address)
+        self.assertEqual(["10.99.0.5"], member.bind.addresses)
         self.assertEqual(
             "neutron port 3fb01977-a4e2-4a28-9a6f-1f0a3a2b4c5d", member.description
         )
@@ -236,15 +236,26 @@ class DesiredTestCase(unittest.TestCase):
             ],
         )
         bind = next(iter(cfg.bridge.values())).member["tap3fb01977-a4"].bind
-        self.assertEqual("10.99.0.5", bind.address)
+        self.assertEqual(["10.99.0.5"], bind.addresses)
         self.assertEqual(["2001:db8::5", "fe80::f816:3eff:feaa:bb01"], bind.addresses6)
+
+    def test_bind_locks_ipv4_sources_to_every_fixed_address(self):
+        cfg = self._build_with_rules(
+            [],
+            fixed_ips=[
+                {"subnet_id": "s1", "ip_address": "10.99.0.6"},
+                {"subnet_id": "s1", "ip_address": "10.99.0.5"},
+            ],
+        )
+        bind = next(iter(cfg.bridge.values())).member["tap3fb01977-a4"].bind
+        self.assertEqual(["10.99.0.5", "10.99.0.6"], bind.addresses)
 
     def test_ipv6_only_port_is_bound_without_an_ipv4_address(self):
         cfg = self._build_with_rules(
             [], fixed_ips=[{"subnet_id": "s2", "ip_address": "2001:db8::5"}]
         )
         bind = next(iter(cfg.bridge.values())).member["tap3fb01977-a4"].bind
-        self.assertIsNone(bind.address)
+        self.assertEqual([], bind.addresses)
         self.assertEqual("fa:16:3e:aa:bb:01", bind.mac)
 
     def test_infra_allowances_are_visible_rules(self):

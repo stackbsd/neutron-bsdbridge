@@ -235,16 +235,15 @@ class Bind(Model):
     """Port security binding for one member."""
 
     mac: str
-    address: str | None = None
+    addresses: list[str] = dataclasses.field(default_factory=list)
     addresses6: list[str] = dataclasses.field(default_factory=list)
 
     def __post_init__(self):
         """Canonicalize the MAC and validate the address shapes."""
         self.mac = canonical_mac(self.mac)
-        if self.address is not None:
-            check_str(self, "address")
-        check_str_list(self, "addresses6")
-        self.addresses6 = sorted(set(self.addresses6))
+        for name in ("addresses", "addresses6"):
+            check_str_list(self, name)
+            setattr(self, name, sorted(set(getattr(self, name))))
 
 
 @dataclasses.dataclass

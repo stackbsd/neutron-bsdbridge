@@ -69,7 +69,7 @@ def cfg(filter_rules):
                     "member": {
                         VM_IF: {
                             "filter": "rigf",
-                            "bind": {"mac": B_MAC, "address": JAIL_IP},
+                            "bind": {"mac": B_MAC, "addresses": [JAIL_IP]},
                         },
                         # plain switching, like a vlan uplink
                         UPLINK_IF: {},

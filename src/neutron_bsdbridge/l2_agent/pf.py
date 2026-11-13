@@ -7,6 +7,7 @@ from neutron_bsdbridge.constants import PFCTL
 from neutron_bsdbridge.utils import default_run
 
 ANCHOR_PREFIX = "l2-neutron/port/"
+SOURCE4_TABLE = "source4"
 SOURCE6_TABLE = "source6"
 
 # config direction from the workload's view
@@ -88,14 +89,19 @@ def render(ifname, filt=None, bind=None, tables=None):
     rule_lines = []
     table_lines = []
 
-    if bind is not None and bind.address is not None:
+    if bind is not None and bind.addresses:
+        table_lines.append(
+            f"table <{SOURCE4_TABLE}> const {{ {', '.join(bind.addresses)} }}"
+        )
         # must precede the source lock as DISCOVER is sourced from 0.0.0.0
         rule_lines.append(
             f"pass in quick on {ifname} inet proto udp from 0.0.0.0 "
             f"to 255.255.255.255 port 67 keep state (if-bound) "
             f'label "{state_label(ifname)}"'
         )
-        rule_lines.append(f"block drop in quick on {ifname} inet from ! {bind.address}")
+        rule_lines.append(
+            f"block drop in quick on {ifname} inet from ! <{SOURCE4_TABLE}>"
+        )
     elif bind is not None:
         rule_lines.append(f"block drop in quick on {ifname} inet all")
 
