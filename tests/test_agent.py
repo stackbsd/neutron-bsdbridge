@@ -37,6 +37,7 @@ def details_for(port_id):
 class FakePluginRpc:
     def __init__(self, devices):
         self.devices = devices
+        self.fetches = []
         self.ups = []
         self.downs = []
         self.refreshes = []
@@ -44,6 +45,7 @@ class FakePluginRpc:
     def get_devices_details_list_and_failed_devices(
         self, context, devices, agent_id, host=None
     ):
+        self.fetches.append(list(devices))
         found = [details_for(d) for d in devices if d in self.devices]
         missing = [{"device": d} for d in devices if d not in self.devices]
         return {"devices": found + missing, "failed_devices": []}
@@ -96,6 +98,9 @@ def make_agent(tmpdir, devices, writer_obj=None, reader=None):
     a._devices_up = set()
     a._misses = {}
     a._candidates = set()
+    a._details = {}
+    a._stale = set()
+    a._unreported = set()
     return a
 
 
@@ -115,14 +120,86 @@ class SyncTestCase(unittest.TestCase):
         with open(os.path.join(self.tmp.name, "devices.json")) as f:
             self.assertEqual({"devices": [PORT_ID]}, json.load(f))
 
-    def test_unchanged_port_is_reported_up_every_pass(self):
+    def test_unchanged_port_is_fetched_and_reported_once(self):
         # the server resets a port to BUILD on every details fetch
         a = make_agent(self.tmp.name, devices={PORT_ID})
         a._candidates = {PORT_ID}
         a._sync()
         a._sync()
-        self.assertEqual([PORT_ID, PORT_ID], a.plugin_rpc.ups)
+        self.assertEqual([[PORT_ID]], a.plugin_rpc.fetches)
+        self.assertEqual([PORT_ID], a.plugin_rpc.ups)
         self.assertEqual([], a.plugin_rpc.downs)
+
+    def test_an_updated_port_is_the_only_one_fetched_and_reported_again(self):
+        other = "9a8b7c6d-0000-4000-8000-000000000002"
+        a = make_agent(self.tmp.name, devices={PORT_ID, other})
+        a._candidates = {PORT_ID, other}
+        a._sync()
+        a.port_update(None, port={"id": other})
+        a._sync()
+        self.assertEqual([other], a.plugin_rpc.fetches[-1])
+        self.assertEqual([*sorted([PORT_ID, other]), other], a.plugin_rpc.ups)
+
+    def test_a_network_update_fetches_every_port(self):
+        a = make_agent(self.tmp.name, devices={PORT_ID})
+        a._candidates = {PORT_ID}
+        a._sync()
+        a.network_update(None, network={"id": "n1"})
+        a._sync()
+        self.assertEqual([[PORT_ID], [PORT_ID]], a.plugin_rpc.fetches)
+        self.assertEqual([PORT_ID, PORT_ID], a.plugin_rpc.ups)
+
+    def test_a_revived_agent_fetches_every_port(self):
+        a = make_agent(self.tmp.name, devices={PORT_ID})
+        a._candidates = {PORT_ID}
+        a._sync()
+        a._dirty = False
+        a.agent_state = {"configurations": {}}
+        a.state_rpc = types.SimpleNamespace(
+            report_state=lambda context, state, use_call: "revived"
+        )
+        a._report_state()
+        self.assertTrue(a._dirty)
+        a._sync()
+        self.assertEqual([[PORT_ID], [PORT_ID]], a.plugin_rpc.fetches)
+
+    def test_a_port_fetched_in_a_failed_pass_is_still_reported_up(self):
+        a = make_agent(self.tmp.name, devices={PORT_ID})
+        a._candidates = {PORT_ID}
+        a._sync()
+        working = a._writer
+        a._writer = writer.Writer(
+            dry_run=False, run=lambda argv, **kw: (1, "", "kernel says no")
+        )
+        a.port_update(None, port={"id": PORT_ID})
+        self.assertRaises(agent_mod.ReconcileError, a._sync)
+        a._writer = working
+        a._sync()
+        self.assertEqual(2, len(a.plugin_rpc.fetches))
+        self.assertEqual([PORT_ID, PORT_ID], a.plugin_rpc.ups)
+
+    def test_a_failed_fetch_is_retried_for_the_same_ports(self):
+        a = make_agent(self.tmp.name, devices={PORT_ID})
+        a._candidates = {PORT_ID}
+        a._sync()
+        a.port_update(None, port={"id": PORT_ID})
+        fetch = a.plugin_rpc.get_devices_details_list_and_failed_devices
+
+        def broken(*args, **kwargs):
+            raise OSError("rpc down")
+
+        a.plugin_rpc.get_devices_details_list_and_failed_devices = broken
+        self.assertRaises(OSError, a._sync)
+        a.plugin_rpc.get_devices_details_list_and_failed_devices = fetch
+        a._sync()
+        self.assertEqual([PORT_ID], a.plugin_rpc.fetches[-1])
+
+    def test_a_deleted_port_leaves_the_cache(self):
+        a = make_agent(self.tmp.name, devices={PORT_ID})
+        a._candidates = {PORT_ID}
+        a._sync()
+        a.port_delete(None, port_id=PORT_ID)
+        self.assertEqual({}, a._details)
 
     def test_departed_port_reports_down_and_stops_tracking(self):
         a = make_agent(self.tmp.name, devices=set())
@@ -590,6 +667,7 @@ class L2popTestCase(unittest.TestCase):
         a = make_agent(self.tmp.name, devices={PORT_ID})
         a._candidates = {PORT_ID}
         a._sync()
+        a.port_update(None, port={"id": PORT_ID})
         a._sync()
         self.assertEqual([True, False], a.plugin_rpc.refreshes)
 
