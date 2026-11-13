@@ -12,6 +12,9 @@ import time
 
 import oslo_messaging
 from neutron.agent import rpc as agent_rpc
+from neutron.api.rpc.callbacks import resources
+from neutron.api.rpc.callbacks.consumer import registry
+from neutron.api.rpc.handlers import resources_rpc
 from neutron.common import config as common_config
 from neutron.conf import service as service_config
 from neutron.conf.agent import common as agent_common_config
@@ -56,6 +59,14 @@ class L3PluginApi:
         cctxt = self.client.prepare()
         return cctxt.call(self.context, "sync_routers", host=self.host, router_ids=None)
 
+    def get_port_forwardings(self, fip_ids):
+        """Fetch the port forwardings of some floating ips."""
+        return resources_rpc.ResourcesPullRpcApi().bulk_pull(
+            self.context,
+            resources.PORTFORWARDING,
+            filter_kwargs={"floatingip_id": fip_ids},
+        )
+
     def update_floatingip_statuses(self, router_id, fip_statuses):
         """Report the status of every floating ip on one router."""
         cctxt = self.client.prepare(version="1.1")
@@ -84,6 +95,7 @@ class BsdBridgeL3Agent:
         self._dirty = True
         self._failures = 0
         self._fip_statuses = {}
+        self._forwarded = {}
         self._counts = {"routers": 0, "interfaces": 0, "floating_ips": 0}
         self.agent_state = {
             "binary": constants.L3_AGENT_BINARY,
@@ -123,18 +135,38 @@ class BsdBridgeL3Agent:
         """Mark state dirty."""
         self._dirty = True
 
+    def port_forwardings_updated(self, context, resource_type, items, event_type):
+        """Mark state dirty."""
+        self._dirty = True
+
     def _sync(self):
         """Fetch, reconcile, and report one pass."""
         desired = []
         fip_statuses = {}
-        for body in self.plugin_rpc.get_routers():
+        forwarded = {}
+        bodies = self.plugin_rpc.get_routers()
+        fip_ids = set()
+        for body in bodies:
+            fip_ids.update(body.get("fip_managed_by_port_forwardings") or ())
+        forwardings = {}
+        if fip_ids:
+            for fwd in self.plugin_rpc.get_port_forwardings(sorted(fip_ids)):
+                if fwd.protocol not in router_mod.FORWARDED_PROTOCOLS:
+                    LOG.warning(
+                        "skipping port forwarding %s: protocol %s is unsupported",
+                        fwd.id,
+                        fwd.protocol,
+                    )
+                    continue
+                forwardings.setdefault(fwd.router_id, []).append(fwd)
+        for body in bodies:
             if body.get("distributed") or body.get("ha"):
                 LOG.warning(
                     "skipping router %s: distributed and ha routers are unsupported",
                     body["id"],
                 )
                 continue
-            spec = router_mod.from_rpc(body)
+            spec = router_mod.from_rpc(body, forwardings.get(body["id"], ()))
             desired.append(spec)
             status = (
                 lib_constants.FLOATINGIP_STATUS_ACTIVE
@@ -142,6 +174,8 @@ class BsdBridgeL3Agent:
                 else lib_constants.FLOATINGIP_STATUS_ERROR
             )
             fip_statuses[spec.id] = {fip.id: status for fip in spec.floating_ips}
+            forwarded[spec.id] = {fwd.fip_id for fwd in spec.forwardings}
+            fip_statuses[spec.id].update(dict.fromkeys(forwarded[spec.id], status))
 
         result = self._reconcile(desired, self.conf.bsdbridge.state_path)
         if result.changed:
@@ -163,6 +197,13 @@ class BsdBridgeL3Agent:
             "floating_ips": sum(len(spec.floating_ips) for spec in desired),
         }
 
+        # a fip that lost its last forwarding is reported DOWN as the server
+        # only does that for associations
+        live = {fip_id for statuses in fip_statuses.values() for fip_id in statuses}
+        for router_id, statuses in fip_statuses.items():
+            for fip_id in self._forwarded.get(router_id, set()) - live:
+                statuses[fip_id] = lib_constants.FLOATINGIP_STATUS_DOWN
+
         # the server marks any fip left out of a router's report DOWN, so a
         # router whose last fip went away reports an empty map once
         for router_id, statuses in fip_statuses.items():
@@ -170,6 +211,7 @@ class BsdBridgeL3Agent:
                 self.plugin_rpc.update_floatingip_statuses(router_id, statuses)
                 LOG.info("%d fip status(es) reported for %s", len(statuses), router_id)
         self._fip_statuses = fip_statuses
+        self._forwarded = forwarded
 
     def sync_if_needed(self, force=False):
         """Run a sync when dirty or forced, backing off on failure."""
@@ -218,6 +260,12 @@ class BsdBridgeL3Agent:
         # one consumer hears both the host-directed and the fanout casts
         self.conn = n_rpc.Connection()
         self.conn.create_consumer(topics.L3_AGENT, [self], fanout=False)
+        registry.register(self.port_forwardings_updated, resources.PORTFORWARDING)
+        self.conn.create_consumer(
+            resources_rpc.resource_type_versioned_topic(resources.PORTFORWARDING),
+            [resources_rpc.ResourcesPushRpcCallback()],
+            fanout=True,
+        )
         self.conn.consume_in_threads()
 
         LOG.info("started on %s (state %s)", self.host, self.conf.bsdbridge.state_path)
