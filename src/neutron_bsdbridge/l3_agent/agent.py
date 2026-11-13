@@ -123,6 +123,15 @@ class BsdBridgeL3Agent:
         """Mark state dirty."""
         self._dirty = True
 
+    def fipnamespace_delete_on_ext_net(self, context, ext_net_id=None):
+        """Ignore a cast meant for distributed routers."""
+
+    def add_arp_entry(self, context, payload=None):
+        """Ignore a cast meant for distributed routers."""
+
+    def del_arp_entry(self, context, payload=None):
+        """Ignore a cast meant for distributed routers."""
+
     def _sync(self):
         """Fetch, reconcile, and report one pass."""
         desired = []
