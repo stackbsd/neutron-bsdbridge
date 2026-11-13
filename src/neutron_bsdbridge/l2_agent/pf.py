@@ -8,6 +8,7 @@ from neutron_bsdbridge.utils import default_run
 
 ANCHOR_PREFIX = "l2-neutron/port/"
 SOURCE6_TABLE = "source6"
+VTEP_TABLE = "l2-neutron-vtep"
 
 # config direction from the workload's view
 # pf's is the host side of the tap

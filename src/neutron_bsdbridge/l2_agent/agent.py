@@ -30,8 +30,8 @@ from oslo_log import log as logging
 
 from neutron_bsdbridge import config as bsdbridge_config
 from neutron_bsdbridge import constants, ifconfig, names
+from neutron_bsdbridge.l2_agent import pf, port_config, relay_client
 from neutron_bsdbridge.l2_agent import plan as plan_mod
-from neutron_bsdbridge.l2_agent import port_config, relay_client
 from neutron_bsdbridge.l2_agent import reconcile as reconcile_mod
 from neutron_bsdbridge.l2_agent import vxlan as vxlan_mod
 from neutron_bsdbridge.l2_agent import writer as writer_mod
@@ -44,6 +44,8 @@ bsdbridge_config.register()
 # an unresolved candidate retries at loop speed, then on full syncs, then drops
 FAST_RETRY_MISSES = 10
 BINDING_MISS_LIMIT = 60
+# seconds the server is given to answer a tunnel refresh
+FDB_SETTLE = 60
 
 
 def vxlan_conf(conf, run=default_run):
@@ -141,6 +143,8 @@ class BsdBridgeAgent:
             )
         # ask l2pop for every forwarding entry on the first report
         self._refresh_tunnels = True
+        self._fdb_asked = None
+        self._vtep_warned = False
         self._dirty = True
         self._failures = 0
         self._devices_up = set()
@@ -335,6 +339,35 @@ class BsdBridgeAgent:
         if rc != 0:
             raise OSError(f"{' '.join(argv[1:])}: {err.strip()}")
 
+    def _sync_endpoints(self):
+        """Fill the pf table of remote tunnel endpoints from l2pop."""
+        table = (constants.PFCTL, "-t", pf.VTEP_TABLE, "-T")
+        rc, out, _err = self._run((*table, "show"))
+        if rc != 0:
+            if not self._vtep_warned:
+                LOG.warning(
+                    "pf table %s does not exist. Declare it in pf.conf to "
+                    "accept vxlan only from known tunnel endpoints.",
+                    pf.VTEP_TABLE,
+                )
+            self._vtep_warned = True
+            return
+        have = pf.parse_table_show(out)
+        with self._fdb_lock:
+            wanted = {ip for net in self._fdb.values() for ip in net["ports"]}
+        wanted.discard(self._vxlan["local"])
+        # a restarted agent would cut the tunnels the relay still serves
+        if self._fdb_asked is None or time.monotonic() - self._fdb_asked < FDB_SETTLE:
+            wanted |= have
+        if wanted == have:
+            return
+        argv = (*table, "replace", *sorted(wanted)) if wanted else (*table, "flush")
+        rc, _out, err = self._run(argv)
+        if rc != 0:
+            LOG.warning("%s: %s", " ".join(argv[1:]), err.strip())
+            return
+        LOG.info("tunnel endpoints now %s", ", ".join(sorted(wanted)) or "none")
+
     def _program_vxlan(self, config, the_plan):
         """Program the forwarding tables and the relay from l2pop."""
         with self._fdb_lock:
@@ -462,6 +495,7 @@ class BsdBridgeAgent:
                 if d.get("network_type") == "vxlan"
             }
             relay_ports = self._relay.ports_for(sorted(vnis))
+            self._sync_endpoints()
 
         # build and reconcile
         config, rendered_devices = port_config.build(
@@ -525,6 +559,8 @@ class BsdBridgeAgent:
                 self.host,
                 refresh_tunnels=self._refresh_tunnels,
             )
+            if self._refresh_tunnels:
+                self._fdb_asked = time.monotonic()
             self._refresh_tunnels = False
         self._devices_up = now_up
 

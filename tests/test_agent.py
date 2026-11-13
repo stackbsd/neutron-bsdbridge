@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 
@@ -16,6 +17,7 @@ except ImportError:
     raise unittest.SkipTest("needs neutron libs; run under the neutron venv")
 
 from neutron_bsdbridge import ifconfig  # noqa: E402
+from neutron_bsdbridge.constants import PFCTL  # noqa: E402
 from neutron_bsdbridge.l2_agent import model, writer  # noqa: E402
 
 PORT_ID = "3fb01977-a4e2-4a28-9a6f-1f0a3a2b4c5d"
@@ -93,6 +95,8 @@ def make_agent(tmpdir, devices, writer_obj=None, reader=None):
     a._fdb_ctl = None
     a._relay = None
     a._refresh_tunnels = True
+    a._fdb_asked = None
+    a._vtep_warned = False
     a._dirty = True
     a._failures = 0
     a._devices_up = set()
@@ -670,6 +674,125 @@ class L2popTestCase(unittest.TestCase):
         a.port_update(None, port={"id": PORT_ID})
         a._sync()
         self.assertEqual([True, False], a.plugin_rpc.refreshes)
+
+
+class FakePfTable:
+    """pfctl with one main ruleset table."""
+
+    def __init__(self, members=(), exists=True):
+        self.members = set(members)
+        self.exists = exists
+        self.writes = []
+
+    def __call__(self, argv):
+        assert argv[:4] == (PFCTL, "-t", "l2-neutron-vtep", "-T"), argv
+        if not self.exists:
+            return 255, "", "pfctl: Table does not exist.\n"
+        if argv[4] == "show":
+            return 0, "".join(f"   {m}\n" for m in sorted(self.members)), ""
+        self.writes.append(argv[4:])
+        self.members = set(argv[5:])
+        return 0, "", ""
+
+
+class EndpointTableTestCase(unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def agent(self, table, settled=True):
+        a = vxlan_agent(self.tmp.name)
+        a._run = table
+        if settled:
+            a._fdb_asked = time.monotonic() - agent_mod.FDB_SETTLE
+        return a
+
+    def test_remote_endpoints_of_every_network_fill_the_table(self):
+        table = FakePfTable()
+        a = self.agent(table)
+        a.add_fdb_entries(
+            None,
+            {
+                NET: {
+                    "segment_id": 5042,
+                    "network_type": "vxlan",
+                    "ports": {"192.0.2.1": [FLOOD], "192.0.2.2": [FLOOD, VM_B]},
+                },
+                "other-net": {
+                    "segment_id": 6000,
+                    "network_type": "vxlan",
+                    "ports": {"192.0.2.3": [FLOOD]},
+                },
+            },
+        )
+        a._sync_endpoints()
+        self.assertEqual([("replace", "192.0.2.2", "192.0.2.3")], table.writes)
+
+    def test_an_unchanged_table_is_left_alone(self):
+        table = FakePfTable({"192.0.2.2"})
+        a = self.agent(table)
+        a.add_fdb_entries(None, fdb({"192.0.2.2": [FLOOD]}))
+        a._sync_endpoints()
+        self.assertEqual([], table.writes)
+
+    def test_a_departed_endpoint_leaves_the_table(self):
+        table = FakePfTable({"192.0.2.2", "192.0.2.3"})
+        a = self.agent(table)
+        a.add_fdb_entries(None, fdb({"192.0.2.2": [FLOOD]}))
+        a._sync_endpoints()
+        self.assertEqual([("replace", "192.0.2.2")], table.writes)
+
+    def test_the_last_endpoint_leaving_flushes_the_table(self):
+        table = FakePfTable({"192.0.2.2"})
+        a = self.agent(table)
+        a._sync_endpoints()
+        self.assertEqual([("flush",)], table.writes)
+
+    def test_a_restarted_agent_keeps_the_members_it_found(self):
+        table = FakePfTable({"192.0.2.2", "192.0.2.3"})
+        a = self.agent(table, settled=False)
+        a._sync_endpoints()
+        self.assertEqual([], table.writes)
+        a.add_fdb_entries(None, fdb({"192.0.2.4": [FLOOD]}))
+        a._sync_endpoints()
+        self.assertEqual({"192.0.2.2", "192.0.2.3", "192.0.2.4"}, table.members)
+
+    def test_members_are_kept_until_the_tunnel_refresh_has_settled(self):
+        table = FakePfTable({"192.0.2.3"})
+        a = self.agent(table, settled=False)
+        a._fdb_asked = time.monotonic()
+        a.add_fdb_entries(None, fdb({"192.0.2.2": [FLOOD]}))
+        a._sync_endpoints()
+        self.assertEqual({"192.0.2.2", "192.0.2.3"}, table.members)
+        a._fdb_asked -= agent_mod.FDB_SETTLE
+        a._sync_endpoints()
+        self.assertEqual({"192.0.2.2"}, table.members)
+
+    def test_a_missing_table_warns_once_and_writes_nothing(self):
+        table = FakePfTable(exists=False)
+        a = self.agent(table)
+        a.add_fdb_entries(None, fdb({"192.0.2.2": [FLOOD]}))
+        with self.assertLogs(agent_mod.LOG.logger, "WARNING") as logs:
+            a._sync_endpoints()
+            a._sync_endpoints()
+        self.assertEqual(1, len(logs.records))
+        self.assertEqual([], table.writes)
+
+    def test_a_failed_write_does_not_raise(self):
+        table = FakePfTable()
+        a = self.agent(table)
+        a._run = lambda argv: (
+            table(argv) if argv[4] == "show" else (1, "", "pfctl: denied\n")
+        )
+        a.add_fdb_entries(None, fdb({"192.0.2.2": [FLOOD]}))
+        a._sync_endpoints()
+
+    def test_the_first_tunnel_refresh_starts_the_settle_time(self):
+        a = make_agent(self.tmp.name, devices={PORT_ID})
+        a._candidates = {PORT_ID}
+        a._sync()
+        self.assertIsNotNone(a._fdb_asked)
 
 
 class DevdTestCase(unittest.TestCase):
