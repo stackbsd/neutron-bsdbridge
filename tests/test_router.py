@@ -1,8 +1,10 @@
 """Router spec tests."""
 
 import dataclasses
+import ipaddress
 import os
 import sys
+import types
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -53,6 +55,21 @@ def fip(**kw):
     }
     base.update(kw)
     return base
+
+
+def forwarding(**kw):
+    base = {
+        "id": "d1d1d1d1-0000-0000-0000-000000000001",
+        "floatingip_id": "f2f2f2f2-0000-0000-0000-000000000002",
+        "floating_ip_address": ipaddress.ip_address("203.0.113.60"),
+        "protocol": "tcp",
+        "external_port_range": "8080:8080",
+        "internal_ip_address": ipaddress.ip_address("10.0.0.7"),
+        "internal_port_range": "80:80",
+        "router_id": ROUTER_ID,
+    }
+    base.update(kw)
+    return types.SimpleNamespace(**base)
 
 
 def rpc_router(**kw):
@@ -191,6 +208,21 @@ class FromRpcTestCase(unittest.TestCase):
         body["external_gateway_info"]["enable_snat"] = False
         self.assertFalse(router.from_rpc(body).enable_snat)
 
+    def test_port_forwardings_are_carried_in_a_stable_order(self):
+        udp = forwarding(id="pf-2", protocol="udp", external_port_range="53")
+        ranged = forwarding(
+            id="pf-3", external_port_range="2000:2010", internal_port_range="3000:3010"
+        )
+        r = router.from_rpc(rpc_router(), [udp, ranged, forwarding()])
+        self.assertEqual(
+            [("tcp", "2000:2010"), ("tcp", "8080"), ("udp", "53")],
+            [(f.protocol, f.external) for f in r.forwardings],
+        )
+        first = r.forwardings[0]
+        self.assertEqual(("203.0.113.60", "10.0.0.7"), (first.floating, first.fixed))
+        self.assertEqual("3000:3010", first.internal)
+        self.assertEqual(forwarding().floatingip_id, first.fip_id)
+
     def test_route_destinations_normalize(self):
         r = router.from_rpc(
             rpc_router(
@@ -247,6 +279,50 @@ class RenderTestCase(unittest.TestCase):
         )
         self.assertEqual(f'pass quick all label "l3-neutron:cfg:{cfg_hash}"', lines[3])
         self.assertEqual(4, len(lines))
+
+    def test_forwarded_floating_ip_is_put_on_the_gateway_once(self):
+        r = router.from_rpc(
+            rpc_router(), [forwarding(), forwarding(id="pf-2", protocol="udp")]
+        )
+        self.assertEqual(
+            (("203.0.113.10", 24), ("203.0.113.50", 32), ("203.0.113.60", 32)),
+            router.addresses(r)[self.qg],
+        )
+
+    def test_pf_text_redirects_each_forwarding_after_nat(self):
+        r = router.from_rpc(
+            rpc_router(),
+            [
+                forwarding(),
+                forwarding(
+                    id="pf-2",
+                    protocol="udp",
+                    external_port_range="2000:2010",
+                    internal_port_range="3000:3010",
+                ),
+                forwarding(
+                    id="pf-3",
+                    external_port_range="4000:4010",
+                    internal_port_range="22:22",
+                ),
+            ],
+        )
+        text, cfg_hash = router.pf_text(r)
+        lines = text.splitlines()
+        self.assertTrue(lines[2].startswith("nat on"))
+        self.assertEqual(
+            [
+                f"rdr on {self.qg} inet proto tcp to 203.0.113.60 port 4000:4010 "
+                "-> 10.0.0.7 port 22",
+                f"rdr on {self.qg} inet proto tcp to 203.0.113.60 port 8080 "
+                "-> 10.0.0.7 port 80",
+                f"rdr on {self.qg} inet proto udp to 203.0.113.60 port 2000:2010 "
+                "-> 10.0.0.7 port 3000:*",
+            ],
+            lines[3:6],
+        )
+        self.assertEqual(7, len(lines))
+        self.assertNotEqual(router.pf_text(self.r)[1], cfg_hash)
 
     def test_snat_off_drops_the_nat_rule_and_moves_the_hash(self):
         _text, with_snat = router.pf_text(self.r)
@@ -336,6 +412,26 @@ class ScopeRulesTestCase(unittest.TestCase):
             ],
             rules,
         )
+
+    def test_forwarded_ports_pass_into_another_scope(self):
+        body = rpc_router(
+            gw_port=gw_port(address_scopes={"4": "ext"}),
+            _interfaces=[int_port(address_scopes={"4": "int"})],
+        )
+        ranged = forwarding(
+            id="pf-2", external_port_range="2000:2010", internal_port_range="3000:3010"
+        )
+        rules = router.scope_rules(router.from_rpc(body, [forwarding(), ranged]))
+        single = (
+            f"pass out quick inet proto tcp to 10.0.0.7 port 80 received-on {self.qg}"
+        )
+        self.assertIn(
+            "pass out quick inet proto tcp to 10.0.0.7 port 3000:3010 "
+            f"received-on {self.qg}",
+            rules,
+        )
+        block = f"block drop out quick on {self.qr} inet received-on {self.qg}"
+        self.assertLess(rules.index(single), rules.index(block))
 
     def test_scope_rules_sit_before_the_marker_and_move_the_hash(self):
         scoped = rpc_router(gw_port=gw_port(address_scopes={"4": None, "6": "s6"}))
