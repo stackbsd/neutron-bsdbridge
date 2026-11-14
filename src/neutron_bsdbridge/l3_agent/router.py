@@ -213,6 +213,8 @@ def rtadvd_confs(router):
         dns = sorted({server for prefix in port.prefixes for server in prefix.dns})
         if dns:
             fields.append(f'rdnss="{",".join(dns[:RDNSS_MAX])}"')
+        if port.mtu:
+            fields.append(f"mtu#{port.mtu}")
         jail_if = router.jail_if(port)
         confs[jail_if] = f"{jail_if}:\\\n\t:{':'.join(fields)}:\n"
     return confs

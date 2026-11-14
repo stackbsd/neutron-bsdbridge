@@ -25,6 +25,14 @@ RELAY_DIR = "/var/run/neutron-bsdbridge-vxlan-relay"
 RELAY_SOCKET = RELAY_DIR + "/control.sock"
 RELAY_STATE = RELAY_DIR + "/state.json"
 
+DHCP_CLIENT_PORT = 68
+DHCP_SERVER_PORT = 67
+DHCPV6_CLIENT_PORT = 546
+DHCPV6_SERVER_PORT = 547
+DHCPV6_SERVERS = "ff02::1:2"
+# router solicitation and advertisement, neighbour solicitation and advertisement
+ND_TYPES = (133, 134, 135, 136)
+
 DESCRIPTION_PREFIX = "neutron port "
 DEVICE_OWNER_DHCP = "network:dhcp"
 DEVICE_OWNER_ROUTER_INTF = "network:router_interface"

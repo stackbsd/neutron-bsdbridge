@@ -3,7 +3,15 @@
 import hashlib
 import re
 
-from neutron_bsdbridge.constants import PFCTL
+from neutron_bsdbridge.constants import (
+    DHCP_CLIENT_PORT,
+    DHCP_SERVER_PORT,
+    DHCPV6_CLIENT_PORT,
+    DHCPV6_SERVER_PORT,
+    DHCPV6_SERVERS,
+    ND_TYPES,
+    PFCTL,
+)
 from neutron_bsdbridge.utils import default_run
 
 ANCHOR_PREFIX = "l2-neutron/port/"
@@ -99,7 +107,7 @@ def render(ifname, filt=None, bind=None, tables=None):
         # must precede the source lock as DISCOVER is sourced from 0.0.0.0
         rule_lines.append(
             f"pass in quick on {ifname} inet proto udp from 0.0.0.0 "
-            f"to 255.255.255.255 port 67 keep state (if-bound) "
+            f"to 255.255.255.255 port {DHCP_SERVER_PORT} keep state (if-bound) "
             f'label "{state_label(ifname)}"'
         )
         rule_lines.append(
@@ -125,7 +133,7 @@ def render(ifname, filt=None, bind=None, tables=None):
         )
         rule_lines.append(
             f"block drop in quick on {ifname} inet6 proto udp "
-            f"from any port 547 to any port 546"
+            f"from any port {DHCPV6_SERVER_PORT} to any port {DHCPV6_CLIENT_PORT}"
         )
 
     if filt is not None:
@@ -150,15 +158,20 @@ def render(ifname, filt=None, bind=None, tables=None):
 
 def render_vxlan(ifname):
     """Render a vxlan uplink's anchor text and its cfg hash."""
-    nd = "{ neighbrsol, neighbradv, routersol, routeradv }"
+    nd = "{ " + ", ".join(str(t) for t in ND_TYPES) + " }"
     lines = [
-        f"pass out quick on {ifname} inet proto udp from any port 68 "
-        "to 255.255.255.255 port 67 no state",
-        f"pass out quick on {ifname} inet proto udp from any port 67 "
-        "to 255.255.255.255 port 68 no state",
+        f"pass out quick on {ifname} inet proto udp from any "
+        f"port {DHCP_CLIENT_PORT} to 255.255.255.255 port {DHCP_SERVER_PORT} "
+        "no state",
+        f"pass out quick on {ifname} inet proto udp from any "
+        f"port {DHCP_SERVER_PORT} to 255.255.255.255 port {DHCP_CLIENT_PORT} "
+        "no state",
         f"block drop out quick on {ifname} inet from any "
         "to { 224.0.0.0/4, 255.255.255.255 }",
         f"pass out quick on {ifname} inet6 proto icmp6 all icmp6-type {nd} no state",
+        f"pass out quick on {ifname} inet6 proto udp from any "
+        f"port {DHCPV6_CLIENT_PORT} to {DHCPV6_SERVERS} "
+        f"port {DHCPV6_SERVER_PORT} no state",
     ]
     cfg_hash = hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
     lines.append(
