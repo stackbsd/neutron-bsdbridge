@@ -6,10 +6,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-try:
-    from neutron_lib.plugins.ml2 import api
-except ImportError:
-    raise unittest.SkipTest("needs neutron; run under the neutron venv")
+from neutron_lib.plugins.ml2 import api
 
 from neutron_bsdbridge import mech, names  # noqa: E402
 
