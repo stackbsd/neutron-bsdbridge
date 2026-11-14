@@ -181,6 +181,20 @@ class FromRpcTestCase(unittest.TestCase):
         self.assertIn('raflags="m"', stateful)
         self.assertIn('pinfoflags0="l":', stateful)
 
+    def test_rtadvd_text_carries_the_port_mtu(self):
+        def text_for(**kw):
+            v6 = int_port(
+                fixed_ips=[{"subnet_id": "v6", "ip_address": "fd00::1"}],
+                subnets=[{"id": "v6", "cidr": "fd00::/64", "ipv6_ra_mode": "slaac"}],
+                **kw,
+            )
+            confs = router.rtadvd_confs(router.from_rpc(rpc_router(_interfaces=[v6])))
+            return confs[names.router_jail_if_name(INT_PORT_ID)]
+
+        self.assertTrue(text_for(mtu=1450).endswith('pinfoflags0="la":mtu#1450:\n'))
+        self.assertNotIn("mtu", text_for(mtu=0))
+        self.assertNotIn("mtu", text_for())
+
     def test_unassociated_floating_ip_is_skipped(self):
         r = router.from_rpc(rpc_router(_floatingips=[fip(fixed_ip_address=None)]))
         self.assertEqual((), r.floating_ips)

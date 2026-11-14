@@ -115,3 +115,33 @@ class SyncTestCase(unittest.TestCase):
         self.assertEqual(2, sent[0]["configurations"]["interfaces"])
         self.assertEqual("legacy", sent[0]["configurations"]["agent_mode"])
         self.assertNotIn("start_flag", sent[1])
+
+
+class RpcEndpointTestCase(unittest.TestCase):
+    def test_update_casts_mark_the_agent_dirty(self):
+        casts = (
+            ("routers_updated", {"routers": ["r1"]}),
+            ("router_deleted", {"router_id": "r1"}),
+            ("router_added_to_agent", {"payload": ["r1"]}),
+            ("router_removed_from_agent", {"payload": {"router_id": "r1"}}),
+            ("network_update", {"network": {"id": "n1"}}),
+            ("agent_updated", {"payload": {"admin_state_up": True}}),
+        )
+        for method, kwargs in casts:
+            a = make_agent([])
+            a._dirty = False
+            getattr(a, method)(None, **kwargs)
+            self.assertTrue(a._dirty, method)
+
+    def test_distributed_router_casts_are_ignored(self):
+        arp = {"router_id": "r1", "arp_table": {"ip_address": "10.0.0.5"}}
+        casts = (
+            ("fipnamespace_delete_on_ext_net", {"ext_net_id": "ext"}),
+            ("add_arp_entry", {"payload": arp}),
+            ("del_arp_entry", {"payload": arp}),
+        )
+        for method, kwargs in casts:
+            a = make_agent([])
+            a._dirty = False
+            self.assertIsNone(getattr(a, method)(None, **kwargs))
+            self.assertFalse(a._dirty, method)
