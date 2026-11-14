@@ -24,7 +24,7 @@ Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD base
 ### Limitations
 
 - Distributed routers are unlikely to ever be supported
-- Tenant vxlan networks do not forward application broadcast or multicast traffic - only ARP, DHCP and IPv6 neighbour discovery is relayed
+- Tenant vxlan networks do not forward application broadcast or multicast traffic - only ARP, DHCPv4, DHCPv6 and IPv6 neighbour discovery is relayed
 - A port with port security sends IPv6 only from its fixed addresses and the link-local address derived from its MAC
 - A router takes its IPv6 default route from the gateway of the external subnet, not from router advertisements
 

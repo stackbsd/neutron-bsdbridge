@@ -50,6 +50,15 @@ def ipv6(icmp_type, next_header=58):
     return ALL_NODES + MAC_A + relay.ETHERTYPE_IPV6 + bytes(header) + body
 
 
+def udp6(dst, sport, dport, next_header=17):
+    header = bytearray(40)
+    header[0] = 0x60
+    header[6] = next_header
+    header[24:40] = socket.inet_pton(socket.AF_INET6, dst)
+    udp = sport.to_bytes(2, "big") + dport.to_bytes(2, "big") + b"\x00" * 20
+    return ALL_NODES + MAC_A + relay.ETHERTYPE_IPV6 + bytes(header) + udp
+
+
 class Clock:
     def __init__(self):
         self.now = 100.0
@@ -137,6 +146,22 @@ class ActionTestCase(unittest.TestCase):
             self.assertEqual(2, len(self.peers(ipv6(icmp_type))))
         self.assertEqual([], self.peers(ipv6(128)))
         self.assertEqual([], self.peers(ipv6(135, next_header=17)))
+
+    def test_dhcpv6_to_the_servers_is_forwarded_and_other_udp_is_dropped(self):
+        data = vxlan(5042, udp6("ff02::1:2", 546, 547))
+        self.assertEqual(
+            [(data, ("192.0.2.2", 4789)), (data, ("192.0.2.3", 4789))],
+            self.sp.handle(5042, data),
+        )
+        self.assertEqual(1, self.sp.counts["forwarded"])
+        self.assertEqual([], self.peers(udp6("ff02::1:2", 547, 546)))
+        self.assertEqual([], self.peers(udp6("ff02::1:2", 5000, 547)))
+        self.assertEqual([], self.peers(udp6("ff02::1:2", 546, 5353)))
+        self.assertEqual([], self.peers(udp6("ff02::1", 546, 547)))
+        self.assertEqual([], self.peers(udp6("ff05::1:3", 546, 547)))
+        self.assertEqual([], self.peers(udp6("ff02::1:2", 546, 547, next_header=6)))
+        self.assertEqual([], self.peers(udp6("ff02::1:2", 546, 547, next_header=0)))
+        self.assertEqual(7, self.sp.counts["dropped"])
 
     def test_non_ip_truncated_and_unknown_vni_are_dropped(self):
         self.assertEqual([], self.peers(BROADCAST + MAC_A + b"\x88\xb5" + b"\x00" * 46))

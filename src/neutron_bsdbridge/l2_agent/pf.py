@@ -8,6 +8,7 @@ from neutron_bsdbridge.constants import (
     DHCP_SERVER_PORT,
     DHCPV6_CLIENT_PORT,
     DHCPV6_SERVER_PORT,
+    DHCPV6_SERVERS,
     ND_TYPES,
     PFCTL,
 )
@@ -161,6 +162,9 @@ def render_vxlan(ifname):
         f"block drop out quick on {ifname} inet from any "
         "to { 224.0.0.0/4, 255.255.255.255 }",
         f"pass out quick on {ifname} inet6 proto icmp6 all icmp6-type {nd} no state",
+        f"pass out quick on {ifname} inet6 proto udp from any "
+        f"port {DHCPV6_CLIENT_PORT} to {DHCPV6_SERVERS} "
+        f"port {DHCPV6_SERVER_PORT} no state",
     ]
     cfg_hash = hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
     lines.append(

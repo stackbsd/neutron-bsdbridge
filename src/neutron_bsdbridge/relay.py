@@ -13,6 +13,9 @@ import time
 from neutron_bsdbridge.constants import (
     DHCP_CLIENT_PORT,
     DHCP_SERVER_PORT,
+    DHCPV6_CLIENT_PORT,
+    DHCPV6_SERVER_PORT,
+    DHCPV6_SERVERS,
     ND_TYPES,
     RELAY_ADDR,
     RELAY_SOCKET,
@@ -38,6 +41,8 @@ DHCP_PORTS = (
     (DHCP_CLIENT_PORT, DHCP_SERVER_PORT),
     (DHCP_SERVER_PORT, DHCP_CLIENT_PORT),
 )
+DHCPV6_PORTS = (DHCPV6_CLIENT_PORT, DHCPV6_SERVER_PORT)
+DHCPV6_GROUP = socket.inet_pton(socket.AF_INET6, DHCPV6_SERVERS)
 
 
 @dataclasses.dataclass
@@ -83,6 +88,13 @@ def action(frame, arp, local):
     if ethertype == ETHERTYPE_IPV6:
         if frame[20] == IPPROTO_ICMPV6 and frame[54] in ND_TYPES:
             return "forward"
+        if frame[20] == IPPROTO_UDP and frame[38:54] == DHCPV6_GROUP:
+            ports = (
+                int.from_bytes(frame[54:56], "big"),
+                int.from_bytes(frame[56:58], "big"),
+            )
+            if ports == DHCPV6_PORTS:
+                return "forward"
         return "drop"
     return "drop"
 

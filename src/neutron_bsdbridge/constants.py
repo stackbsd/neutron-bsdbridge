@@ -29,6 +29,7 @@ DHCP_CLIENT_PORT = 68
 DHCP_SERVER_PORT = 67
 DHCPV6_CLIENT_PORT = 546
 DHCPV6_SERVER_PORT = 547
+DHCPV6_SERVERS = "ff02::1:2"
 # router solicitation and advertisement, neighbour solicitation and advertisement
 ND_TYPES = (133, 134, 135, 136)
 
