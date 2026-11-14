@@ -40,10 +40,12 @@ ether anchor "l2-neutron/port/*"
 anchor "l2-neutron/port/*"
 ```
 
-For vxlan networks, port 4789 must be open on the host underlay interface (the one assigned `[vxlan] local_ip` in the config) and allow loopback traffic for the relay service:
+For vxlan networks, port 4789 must be open on the host underlay interface (the one assigned `[vxlan] local_ip` in the config) and allow loopback traffic for the relay service. The L2 agent keeps the tunnel addresses of the other hosts in the `l2-neutron-vtep` table:
 
 ```
-pass on vtnet0 proto udp to port 4789
+table <l2-neutron-vtep> persist
+pass in on vtnet0 proto udp from <l2-neutron-vtep> to port 4789
+pass out on vtnet0 proto udp to port 4789
 pass on lo0 proto udp to 127.0.0.1
 ```
 
