@@ -524,7 +524,7 @@ class VxlanUplinkTestCase(unittest.TestCase):
     def test_dhcp_and_neighbour_discovery_pass_before_the_blocks(self):
         text, cfg_hash = pf.render_vxlan("vx1")
         lines = text.splitlines()
-        self.assertEqual(5, len(lines))
+        self.assertEqual(6, len(lines))
         self.assertIn("port 68 to 255.255.255.255 port 67 no state", lines[0])
         self.assertIn("port 67 to 255.255.255.255 port 68 no state", lines[1])
         self.assertEqual(
@@ -532,10 +532,15 @@ class VxlanUplinkTestCase(unittest.TestCase):
             "to { 224.0.0.0/4, 255.255.255.255 }",
             lines[2],
         )
-        self.assertIn("icmp6-type { neighbrsol, neighbradv, routersol", lines[3])
+        self.assertIn("icmp6-type { 133, 134, 135, 136 }", lines[3])
+        self.assertEqual(
+            "pass out quick on vx1 inet6 proto udp from any port 546 "
+            "to ff02::1:2 port 547 no state",
+            lines[4],
+        )
         self.assertEqual(
             "block drop out quick on vx1 inet6 from any to ff00::/8 "
             f'label "l2-neutron:cfg:{cfg_hash}"',
-            lines[4],
+            lines[5],
         )
         self.assertEqual(cfg_hash, pf.parse_rules_hash(text))
