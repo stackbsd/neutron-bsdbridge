@@ -11,7 +11,7 @@ Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD base
 - L2 agent to manage bridge, taps and security group rules
 - Port security with allowed address pairs
 - DHCP agent running one dnsmasq per network inside separate VNET jails
-- L3 agent running each router inside a VNET jail with SNAT and floating IPs
+- L3 agent running each router inside a VNET jail with SNAT, floating IPs and port forwarding
 - IPv6 subnets in SLAAC, DHCPv6 stateless and DHCPv6 stateful modes, with router advertisements from `rtadvd(8)` in the router jail
 - IPv6 security group rules and source address filtering
 

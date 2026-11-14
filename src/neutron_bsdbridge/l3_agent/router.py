@@ -13,6 +13,7 @@ DEFAULT_ROUTE6 = "::/0"
 STATEFUL = "dhcpv6-stateful"
 STATELESS = "dhcpv6-stateless"
 RDNSS_MAX = 3
+FORWARDED_PROTOCOLS = ("tcp", "udp")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -55,6 +56,19 @@ class FloatingIp:
 
 
 @dataclasses.dataclass(frozen=True)
+class PortForwarding:
+    """One forwarded port range of a floating ip."""
+
+    id: str
+    fip_id: str
+    floating: str
+    protocol: str
+    external: str
+    fixed: str
+    internal: str
+
+
+@dataclasses.dataclass(frozen=True)
 class Router:
     """One router's desired jail, ports, routes and translation."""
 
@@ -64,6 +78,7 @@ class Router:
     floating_ips: tuple
     routes: tuple
     enable_snat: bool = True
+    forwardings: tuple = ()
 
     @property
     def jail(self):
@@ -125,7 +140,25 @@ def port_from_rpc(port):
     )
 
 
-def from_rpc(router):
+def forwarding_from_rpc(forwarding):
+    """Build a PortForwarding from a neutron port forwarding object."""
+    # neutron spells a single port as a range of one
+    external, internal = (
+        ":".join(dict.fromkeys(str(ports).split(":")))
+        for ports in (forwarding.external_port_range, forwarding.internal_port_range)
+    )
+    return PortForwarding(
+        id=forwarding.id,
+        fip_id=forwarding.floatingip_id,
+        floating=str(forwarding.floating_ip_address),
+        protocol=forwarding.protocol,
+        external=external,
+        fixed=str(forwarding.internal_ip_address),
+        internal=internal,
+    )
+
+
+def from_rpc(router, forwardings=()):
     """Build the Router spec one sync_routers entry reconciles to."""
     gateway = port_from_rpc(router["gw_port"]) if router.get("gw_port") else None
     interfaces = []
@@ -157,6 +190,12 @@ def from_rpc(router):
         floating_ips=tuple(fips),
         routes=tuple(sorted(routes)),
         enable_snat=bool(router.get("enable_snat", gw_info.get("enable_snat", True))),
+        forwardings=tuple(
+            sorted(
+                (forwarding_from_rpc(f) for f in forwardings),
+                key=lambda f: (f.floating, f.protocol, f.external),
+            )
+        ),
     )
 
 
@@ -173,7 +212,9 @@ def addresses(router):
     for port in router.ports:
         ips = list(port.ips)
         if port is router.gateway:
-            ips += [(fip.floating, 32) for fip in router.floating_ips]
+            floating = {fip.floating for fip in router.floating_ips}
+            floating |= {fwd.floating for fwd in router.forwardings}
+            ips += [(address, 32) for address in sorted(floating)]
         out[router.jail_if(port)] = tuple(ips)
     return out
 
@@ -243,6 +284,11 @@ def scope_rules(router):
                 f"pass out quick inet to {fip.fixed} received-on {qg}",
                 f"pass out quick on {qg} inet from {fip.floating}",
             ]
+        for fwd in router.forwardings:
+            passes.append(
+                f"pass out quick inet proto {fwd.protocol} to {fwd.fixed} "
+                f"port {fwd.internal} received-on {qg}"
+            )
     return passes + blocks["inet"] + blocks["inet6"]
 
 
@@ -261,6 +307,15 @@ def pf_text(router):
         if router.enable_snat and internal and source:
             lines.append(
                 f"nat on {qg} inet from {{ {', '.join(internal)} }} to any -> {source}"
+            )
+        for fwd in router.forwardings:
+            target = fwd.internal.partition(":")[0]
+            # a range onto a range maps port for port
+            if ":" in fwd.external and ":" in fwd.internal:
+                target += ":*"
+            lines.append(
+                f"rdr on {qg} inet proto {fwd.protocol} to {fwd.floating} "
+                f"port {fwd.external} -> {fwd.fixed} port {target}"
             )
     lines += scope_rules(router)
     cfg_hash = hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]

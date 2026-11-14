@@ -245,6 +245,34 @@ class ReconcileTestCase(unittest.TestCase):
         )
         self.assertNotIn("binat", self.kernel.pf_rules[RTR.jail])
 
+    def test_port_forwarding_adds_the_alias_and_the_redirect(self):
+        self._reconcile([RTR])
+        fwd = router.PortForwarding(
+            id="pf-1",
+            fip_id="fip-2",
+            floating="203.0.113.60",
+            protocol="tcp",
+            external="8080",
+            fixed="10.0.0.7",
+            internal="80",
+        )
+        result = self._reconcile([dataclasses.replace(RTR, forwardings=(fwd,))])
+        self.assertEqual(
+            ["SetJailIfInet", "WritePf", "LoadPf"], [r.op for r in result.receipts]
+        )
+        self.assertIn(
+            ("203.0.113.60", 32), self.kernel.jail_ifaces[(RTR.jail, QG)]["inets"]
+        )
+        self.assertIn(
+            f"rdr on {QG} inet proto tcp to 203.0.113.60 port 8080 -> 10.0.0.7 port 80",
+            self.kernel.pf_rules[RTR.jail],
+        )
+        result = self._reconcile([RTR])
+        self.assertEqual(
+            ["DropJailIfInet", "WritePf", "LoadPf"], [r.op for r in result.receipts]
+        )
+        self.assertNotIn("rdr", self.kernel.pf_rules[RTR.jail])
+
     def test_route_change_is_a_delete_and_an_add(self):
         self._reconcile([RTR])
         moved = router.Router(
