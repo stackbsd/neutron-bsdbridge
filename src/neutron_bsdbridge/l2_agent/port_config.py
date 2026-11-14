@@ -129,7 +129,9 @@ def sg_rules_for_port(port, sg_info, tables_used):
 def infra_rules():
     """Return the per-port allowances for DHCP clients and neighbor discovery."""
     tables = []
-    for ports, types in (((68, 546), ICMP6_IN), ((67, 547), ICMP6_OUT)):
+    client = (constants.DHCP_CLIENT_PORT, constants.DHCPV6_CLIENT_PORT)
+    server = (constants.DHCP_SERVER_PORT, constants.DHCPV6_SERVER_PORT)
+    for ports, types in ((client, ICMP6_IN), (server, ICMP6_OUT)):
         bodies = [
             {"action": "pass", "family": "inet", "proto": "udp", "port": ports[0]},
             {"action": "pass", "family": "inet6", "proto": "udp", "port": ports[1]},
@@ -232,13 +234,15 @@ def build(ports, sg_info, interface_mappings, vxlan_conf=None, relay_ports=None)
             v4 = [ip for ip in fixed if ":" not in ip]
             v6 = [ip for ip in fixed if ":" in ip]
             if fixed and port.get("mac_address"):
-                bind = {
+                member["bind"] = {
                     "mac": port["mac_address"],
+                    "addresses": v4,
                     "addresses6": [*v6, link_local(port["mac_address"])],
+                    "allowed": [
+                        str(pair["ip_address"])
+                        for pair in port.get("allowed_address_pairs") or []
+                    ],
                 }
-                if v4:
-                    bind["address"] = v4[0]
-                member["bind"] = bind
         stanza["member"][tap] = member
 
     tables = {}

@@ -23,14 +23,15 @@ from neutron.conf import service as service_config
 from neutron.conf.agent import common as agent_common_config
 from neutron_lib import constants as lib_constants
 from neutron_lib import context as n_context
+from neutron_lib.agent import constants as agent_consts
 from neutron_lib.agent import topics
 from oslo_config import cfg
 from oslo_log import log as logging
 
 from neutron_bsdbridge import config as bsdbridge_config
 from neutron_bsdbridge import constants, ifconfig, names
+from neutron_bsdbridge.l2_agent import pf, port_config, relay_client
 from neutron_bsdbridge.l2_agent import plan as plan_mod
-from neutron_bsdbridge.l2_agent import port_config, relay_client
 from neutron_bsdbridge.l2_agent import reconcile as reconcile_mod
 from neutron_bsdbridge.l2_agent import vxlan as vxlan_mod
 from neutron_bsdbridge.l2_agent import writer as writer_mod
@@ -43,6 +44,8 @@ bsdbridge_config.register()
 # an unresolved candidate retries at loop speed, then on full syncs, then drops
 FAST_RETRY_MISSES = 10
 BINDING_MISS_LIMIT = 60
+# seconds the server is given to answer a tunnel refresh
+FDB_SETTLE = 60
 
 
 def vxlan_conf(conf, run=default_run):
@@ -140,11 +143,16 @@ class BsdBridgeAgent:
             )
         # ask l2pop for every forwarding entry on the first report
         self._refresh_tunnels = True
+        self._fdb_asked = None
+        self._vtep_warned = False
         self._dirty = True
         self._failures = 0
         self._devices_up = set()
         self._misses = {}
         self._candidates = set(self._recover_devices())
+        self._details = {}
+        self._stale = set()
+        self._unreported = set()
         self.agent_state = {
             "binary": constants.AGENT_BINARY,
             "host": self.host,
@@ -217,6 +225,7 @@ class BsdBridgeAgent:
         LOG.info("rpc port_update %s", port.get("id"))
         if port.get("id"):
             self._candidates.add(port["id"])
+            self._stale.add(port["id"])
         self._dirty = True
 
     def port_delete(self, context, **kwargs):
@@ -225,10 +234,12 @@ class BsdBridgeAgent:
         if port_id:
             self._candidates.discard(port_id)
             self._misses.pop(port_id, None)
+            self._details.pop(port_id, None)
         self._dirty = True
 
     def network_update(self, context, **kwargs):
-        """Mark state dirty."""
+        """Refetch every port and mark state dirty."""
+        self._stale.update(self._details)
         self._dirty = True
 
     def security_groups_rule_updated(self, context, **kwargs):
@@ -240,7 +251,9 @@ class BsdBridgeAgent:
         self._dirty = True
 
     def binding_deactivate(self, context, **kwargs):
-        """Mark state dirty."""
+        """Refetch the port and mark state dirty."""
+        if kwargs.get("port_id"):
+            self._stale.add(kwargs["port_id"])
         self._dirty = True
 
     def binding_activate(self, context, **kwargs):
@@ -248,6 +261,7 @@ class BsdBridgeAgent:
         port_id = kwargs.get("port_id")
         if port_id:
             self._candidates.add(port_id)
+            self._stale.add(port_id)
         self._dirty = True
 
     @contextlib.contextmanager
@@ -325,6 +339,35 @@ class BsdBridgeAgent:
         if rc != 0:
             raise OSError(f"{' '.join(argv[1:])}: {err.strip()}")
 
+    def _sync_endpoints(self):
+        """Fill the pf table of remote tunnel endpoints from l2pop."""
+        table = (constants.PFCTL, "-t", pf.VTEP_TABLE, "-T")
+        rc, out, _err = self._run((*table, "show"))
+        if rc != 0:
+            if not self._vtep_warned:
+                LOG.warning(
+                    "pf table %s does not exist. Declare it in pf.conf to "
+                    "accept vxlan only from known tunnel endpoints.",
+                    pf.VTEP_TABLE,
+                )
+            self._vtep_warned = True
+            return
+        have = pf.parse_table_show(out)
+        with self._fdb_lock:
+            wanted = {ip for net in self._fdb.values() for ip in net["ports"]}
+        wanted.discard(self._vxlan["local"])
+        # a restarted agent would cut the tunnels the relay still serves
+        if self._fdb_asked is None or time.monotonic() - self._fdb_asked < FDB_SETTLE:
+            wanted |= have
+        if wanted == have:
+            return
+        argv = (*table, "replace", *sorted(wanted)) if wanted else (*table, "flush")
+        rc, _out, err = self._run(argv)
+        if rc != 0:
+            LOG.warning("%s: %s", " ".join(argv[1:]), err.strip())
+            return
+        LOG.info("tunnel endpoints now %s", ", ".join(sorted(wanted)) or "none")
+
     def _program_vxlan(self, config, the_plan):
         """Program the forwarding tables and the relay from l2pop."""
         with self._fdb_lock:
@@ -375,9 +418,10 @@ class BsdBridgeAgent:
             self._installed[ifname] = installed
             local = sorted(
                 {
-                    m.bind.address
+                    address
                     for m in bridge.member.values()
-                    if m.bind and m.bind.address
+                    if m.bind
+                    for address in m.bind.addresses
                 }
             )
             tables[vni] = (peers, arp, local)
@@ -393,7 +437,6 @@ class BsdBridgeAgent:
         """Fetch, build, reconcile, and report one pass."""
         self._candidates |= self._devices_from_service_ifs()
         devices = sorted(self._candidates)
-        details = []
         pending = set()
 
         def miss(device):
@@ -411,19 +454,32 @@ class BsdBridgeAgent:
                 self._misses[device] = count
                 pending.add(device)
 
+        # the server sets a port to BUILD whenever its details are fetched
+        # a port updated during the fetch stays stale for the next pass
+        stale = self._stale
+        self._stale = set()
+        wanted = [d for d in devices if d in stale or d not in self._details]
         # an entry without a port_id is a bind still in flight
-        if devices:
-            result = self.plugin_rpc.get_devices_details_list_and_failed_devices(
-                self.context, devices, self.agent_id, host=self.host
-            )
+        if wanted:
+            try:
+                result = self.plugin_rpc.get_devices_details_list_and_failed_devices(
+                    self.context, wanted, self.agent_id, host=self.host
+                )
+            except Exception:
+                self._stale.update(stale)
+                raise
+            self._unreported.update(wanted)
             for entry in result.get("devices", []):
                 if entry.get("port_id"):
-                    details.append(entry)
+                    self._details[entry["port_id"]] = entry
                     self._misses.pop(entry["port_id"], None)
                 else:
+                    self._details.pop(entry.get("device"), None)
                     miss(entry.get("device"))
             for device in result.get("failed_devices", []):
+                self._details.pop(device, None)
                 miss(device)
+        details = [self._details[d] for d in devices if d in self._details]
         our_devices = [d["port_id"] for d in details]
         sg_info = {}
         if our_devices:
@@ -440,6 +496,7 @@ class BsdBridgeAgent:
                 if d.get("network_type") == "vxlan"
             }
             relay_ports = self._relay.ports_for(sorted(vnis))
+            self._sync_endpoints()
 
         # build and reconcile
         config, rendered_devices = port_config.build(
@@ -485,23 +542,26 @@ class BsdBridgeAgent:
             and names.dhcp_if_name(device) not in waiting
             and names.router_if_name(device) not in waiting
         }
-        for device in sorted(now_up - self._devices_up):
+        came_up = now_up - self._devices_up
+        went_down = sorted(self._devices_up - now_up)
+        for device in sorted(came_up):
             LOG.info("%s reported up", device)
-        down = sorted(self._devices_up - now_up)
-        for device in down:
+        for device in went_down:
             LOG.info("%s reported down", device)
 
-        # report every up device every pass since neutron server resets
-        # a port back to BUILD each time details are fetched
-        if now_up or down:
+        # a fetched port waits in BUILD until it is reported up again
+        report_up = sorted(now_up & (self._unreported | came_up))
+        if report_up or went_down:
             self.plugin_rpc.update_device_list(
                 self.context,
-                sorted(now_up),
-                down,
+                report_up,
+                went_down,
                 self.agent_id,
                 self.host,
                 refresh_tunnels=self._refresh_tunnels,
             )
+            if self._refresh_tunnels:
+                self._fdb_asked = time.monotonic()
             self._refresh_tunnels = False
         self._devices_up = now_up
 
@@ -511,6 +571,10 @@ class BsdBridgeAgent:
         self._candidates = (
             set(our_devices) | (self._candidates & now_up) | pending | unseen
         )
+        # forget ports that are gone and ports now reported
+        for device in set(self._details) - self._candidates:
+            del self._details[device]
+        self._unreported = (self._unreported & self._candidates) - now_up
         if any(self._misses.get(device, 0) <= FAST_RETRY_MISSES for device in pending):
             self._dirty = True
 
@@ -568,8 +632,13 @@ class BsdBridgeAgent:
         try:
             if self._relay is not None:
                 self.agent_state["configurations"]["vxlan_relay"] = self._relay.stats()
-            self.state_rpc.report_state(self.context, self.agent_state)
+            status = self.state_rpc.report_state(self.context, self.agent_state, True)
             self.agent_state.pop("start_flag", None)
+            # the server may have missed our reports and so may we its casts
+            if status == agent_consts.AGENT_REVIVED:
+                LOG.info("agent revived, refetching every port")
+                self._stale.update(self._details)
+                self._dirty = True
         except Exception:
             LOG.exception("state report failed")
 

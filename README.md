@@ -9,7 +9,7 @@ Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD base
 - ML2 mechanism driver that binds ports with `vif_type=bridge` and publishes to Nova
 - Implements one bridge per Neutron segment for vlan, flat, vxlan and local networks.
 - L2 agent to manage bridge, taps and security group rules
-- Port security
+- Port security with allowed address pairs
 - DHCP agent running one dnsmasq per network inside separate VNET jails
 - L3 agent running each router inside a VNET jail with SNAT, floating IPs and port forwarding
 - IPv6 subnets in SLAAC, DHCPv6 stateless and DHCPv6 stateful modes, with router advertisements from `rtadvd(8)` in the router jail
@@ -24,8 +24,8 @@ Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD base
 ### Limitations
 
 - Distributed routers are unlikely to ever be supported
-- Tenant vxlan networks do not forward application broadcast or multicast traffic - only ARP, DHCP and IPv6 neighbour discovery is relayed
-- A port with port security sends IPv6 only from its fixed addresses and the link-local address derived from its MAC
+- Tenant vxlan networks do not forward application broadcast or multicast traffic - only ARP, DHCPv4, DHCPv6 and IPv6 neighbour discovery is relayed
+- A port with port security sends IPv6 only from its fixed addresses, its allowed address pairs and the link-local address derived from its MAC
 - A router takes its IPv6 default route from the gateway of the external subnet, not from router advertisements
 
 ## Host requirements
@@ -40,10 +40,12 @@ ether anchor "l2-neutron/port/*"
 anchor "l2-neutron/port/*"
 ```
 
-For vxlan networks, port 4789 must be open on the host underlay interface (the one assigned `[vxlan] local_ip` in the config) and allow loopback traffic for the relay service:
+For vxlan networks, port 4789 must be open on the host underlay interface (the one assigned `[vxlan] local_ip` in the config) and allow loopback traffic for the relay service. The L2 agent keeps the tunnel addresses of the other hosts in the `l2-neutron-vtep` table:
 
 ```
-pass on vtnet0 proto udp to port 4789
+table <l2-neutron-vtep> persist
+pass in on vtnet0 proto udp from <l2-neutron-vtep> to port 4789
+pass out on vtnet0 proto udp to port 4789
 pass on lo0 proto udp to 127.0.0.1
 ```
 

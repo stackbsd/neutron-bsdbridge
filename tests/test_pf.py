@@ -39,7 +39,7 @@ class RenderTestCase(unittest.TestCase):
     def test_implicit_deny_is_rendered_both_directions(self):
         """The anchor ends with explicit block rules in both directions."""
         text, _ = pf.render(
-            "tap0", None, model.Bind(mac="aa:bb:cc:dd:ee:ff", address="10.0.0.5")
+            "tap0", None, model.Bind(mac="aa:bb:cc:dd:ee:ff", addresses=["10.0.0.5"])
         )
         self.assertIn("block drop out quick on tap0 all", text)
         self.assertIn('block drop in quick on tap0 all label "l2-neutron:cfg:', text)
@@ -78,9 +78,10 @@ class RenderTestCase(unittest.TestCase):
         """bind{} renders the inet source lock and no ether rules."""
         # the mac half is the bridge's LockMemberMac op
         text, _ = pf.render(
-            "tap0", None, model.Bind(mac="58:9C:FC:10:AA:01", address="10.10.20.11")
+            "tap0", None, model.Bind(mac="58:9C:FC:10:AA:01", addresses=["10.10.20.11"])
         )
-        self.assertIn("block drop in quick on tap0 inet from ! 10.10.20.11", text)
+        self.assertIn("table <source4> const { 10.10.20.11 }", text)
+        self.assertIn("block drop in quick on tap0 inet from ! <source4>", text)
         self.assertNotIn("ether", text)
 
 
@@ -209,7 +210,10 @@ class MacLockPlanTestCase(unittest.TestCase):
                     "tap00000000-01": {
                         "type": "tap",
                         "filter": "web",
-                        "bind": {"mac": "aa:bb:cc:dd:ee:01", "address": "10.10.20.11"},
+                        "bind": {
+                            "mac": "aa:bb:cc:dd:ee:01",
+                            "addresses": ["10.10.20.11"],
+                        },
                     }
                 },
             }
@@ -468,6 +472,41 @@ class Source6TestCase(unittest.TestCase):
         text, _ = self.render(addresses6=["fe80::1"])
         self.assertIn("block drop in quick on tap0 inet all", text)
 
+    def test_every_ipv4_address_is_a_source(self):
+        """IPv4 from the workload may come from any of its addresses."""
+        text, _ = self.render(addresses=["10.0.0.6", "10.0.0.5"])
+        self.assertIn("table <source4> const { 10.0.0.5, 10.0.0.6 }", text)
+        self.assertIn("block drop in quick on tap0 inet from ! <source4>", text)
+
+    def test_ipv4_addresses_change_the_hash(self):
+        """A changed IPv4 address reloads the anchor."""
+        _, h1 = self.render(addresses=["10.0.0.5"])
+        _, h2 = self.render(addresses=["10.0.0.5", "10.0.0.6"])
+        self.assertNotEqual(h1, h2)
+
+    def test_allowed_addresses_join_the_source_tables_by_family(self):
+        """An allowed address or CIDR is a source in its family's table."""
+        text, _ = self.render(
+            addresses=["10.0.0.5"],
+            addresses6=["fe80::1"],
+            allowed=["192.0.2.0/24", "10.0.0.5", "2001:db8:1::/64"],
+        )
+        self.assertIn("table <source4> const { 10.0.0.5, 192.0.2.0/24 }", text)
+        self.assertIn("table <source6> const { 2001:db8:1::/64, fe80::1 }", text)
+
+    def test_allowed_ipv4_address_opens_ipv4_on_an_ipv6_only_port(self):
+        """An IPv4 pair on a port without an IPv4 address is its only source."""
+        text, _ = self.render(addresses6=["fe80::1"], allowed=["10.0.0.9"])
+        self.assertIn("table <source4> const { 10.0.0.9 }", text)
+        self.assertIn("block drop in quick on tap0 inet from ! <source4>", text)
+        self.assertNotIn("block drop in quick on tap0 inet all", text)
+
+    def test_allowed_addresses_change_the_hash(self):
+        """A changed allowed address reloads the anchor."""
+        _, h1 = self.render(addresses=["10.0.0.5"])
+        _, h2 = self.render(addresses=["10.0.0.5"], allowed=["10.0.0.9"])
+        self.assertNotEqual(h1, h2)
+
     def test_addresses_change_the_hash(self):
         """A changed IPv6 address reloads the anchor."""
         _, h1 = self.render(addresses6=["fe80::1"])
@@ -476,7 +515,7 @@ class Source6TestCase(unittest.TestCase):
 
     def test_ipv4_only_bind_is_unchanged(self):
         """A bind with no IPv6 addresses renders no IPv6 lock."""
-        text, _ = self.render(address="10.0.0.5")
+        text, _ = self.render(addresses=["10.0.0.5"])
         self.assertNotIn("inet6", text)
 
 
@@ -503,7 +542,7 @@ class DhcpClientTestCase(unittest.TestCase):
     def test_dhcp_client_passes_before_the_source_lock(self):
         """The 0.0.0.0-sourced DHCP request passes ahead of the lock."""
         text, _ = pf.render(
-            "tap0", None, model.Bind(mac="aa:bb:cc:dd:ee:ff", address="10.0.0.5")
+            "tap0", None, model.Bind(mac="aa:bb:cc:dd:ee:ff", addresses=["10.0.0.5"])
         )
         lines = text.splitlines()
         dhcp = next(
@@ -524,7 +563,7 @@ class VxlanUplinkTestCase(unittest.TestCase):
     def test_dhcp_and_neighbour_discovery_pass_before_the_blocks(self):
         text, cfg_hash = pf.render_vxlan("vx1")
         lines = text.splitlines()
-        self.assertEqual(5, len(lines))
+        self.assertEqual(6, len(lines))
         self.assertIn("port 68 to 255.255.255.255 port 67 no state", lines[0])
         self.assertIn("port 67 to 255.255.255.255 port 68 no state", lines[1])
         self.assertEqual(
@@ -532,10 +571,15 @@ class VxlanUplinkTestCase(unittest.TestCase):
             "to { 224.0.0.0/4, 255.255.255.255 }",
             lines[2],
         )
-        self.assertIn("icmp6-type { neighbrsol, neighbradv, routersol", lines[3])
+        self.assertIn("icmp6-type { 133, 134, 135, 136 }", lines[3])
+        self.assertEqual(
+            "pass out quick on vx1 inet6 proto udp from any port 546 "
+            "to ff02::1:2 port 547 no state",
+            lines[4],
+        )
         self.assertEqual(
             "block drop out quick on vx1 inet6 from any to ff00::/8 "
             f'label "l2-neutron:cfg:{cfg_hash}"',
-            lines[4],
+            lines[5],
         )
         self.assertEqual(cfg_hash, pf.parse_rules_hash(text))
