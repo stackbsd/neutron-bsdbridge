@@ -11,13 +11,9 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-try:
-    from neutron_bsdbridge.l2_agent import agent as agent_mod
-except ImportError:
-    raise unittest.SkipTest("needs neutron libs; run under the neutron venv")
-
 from neutron_bsdbridge import ifconfig  # noqa: E402
 from neutron_bsdbridge.constants import PFCTL  # noqa: E402
+from neutron_bsdbridge.l2_agent import agent as agent_mod
 from neutron_bsdbridge.l2_agent import model, writer  # noqa: E402
 
 PORT_ID = "3fb01977-a4e2-4a28-9a6f-1f0a3a2b4c5d"

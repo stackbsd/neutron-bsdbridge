@@ -7,12 +7,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-try:
-    from neutron_bsdbridge.l3_agent import agent as l3_agent_mod
-except ImportError:
-    raise unittest.SkipTest("needs neutron libs; run under the neutron venv")
-
 from neutron_bsdbridge import jail  # noqa: E402
+from neutron_bsdbridge.l3_agent import agent as l3_agent_mod
 from neutron_bsdbridge.utils import Receipt  # noqa: E402
 from tests.test_router import fip, forwarding, rpc_router  # noqa: E402
 

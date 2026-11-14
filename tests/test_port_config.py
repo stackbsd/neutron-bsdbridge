@@ -6,11 +6,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-try:
-    from neutron_bsdbridge import names
-    from neutron_bsdbridge.l2_agent import port_config
-except ImportError:
-    raise unittest.SkipTest("needs oslo libs; run under the neutron venv")
+from neutron_bsdbridge import names
+from neutron_bsdbridge.l2_agent import port_config
 
 
 def port(port_id="3fb01977-a4e2-4a28-9a6f-1f0a3a2b4c5d", network_type="local", **kw):
