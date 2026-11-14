@@ -215,6 +215,14 @@ class SyncTestCase(unittest.TestCase):
             1, len(a.plugin_rpc.ready), "already-ready ports are not re-reported"
         )
 
+    def test_a_readdressed_port_is_reported_ready_again(self):
+        a = make_agent([network(ports=[dhcp_port(), vm_port()])])
+        a._sync()
+        moved = vm_port(fixed_ips=[{"subnet_id": SUBNET_ID, "ip_address": "10.99.0.9"}])
+        a.plugin_rpc.networks = [network(ports=[dhcp_port(), moved])]
+        a._sync()
+        self.assertEqual([vm_port()["id"]], a.plugin_rpc.ready[-1])
+
     def test_slaac_only_network_runs_no_dnsmasq_but_reports_ready(self):
         v6 = subnet(
             id="v6sub",

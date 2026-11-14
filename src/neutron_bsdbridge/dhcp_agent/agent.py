@@ -285,8 +285,13 @@ class BsdBridgeDhcpAgent:
             if net.get("admin_state_up", True):
                 # a port on a slaac subnet waits on this report as well
                 subnet_ids = {s["id"] for s in subnets}
+                # the server waits again when a port's addresses or MAC change
                 ready |= {
-                    p["id"]
+                    (
+                        p["id"],
+                        p.get("mac_address"),
+                        tuple(sorted(f["ip_address"] for f in p.get("fixed_ips", []))),
+                    )
                     for p in net.get("ports", [])
                     if any(f["subnet_id"] in subnet_ids for f in p.get("fixed_ips", []))
                 }
@@ -322,7 +327,7 @@ class BsdBridgeDhcpAgent:
             )
         self._network_count = len(desired)
 
-        newly_ready = ready - self._ready
+        newly_ready = {entry[0] for entry in ready - self._ready}
         if newly_ready:
             self.plugin_rpc.dhcp_ready_on_ports(sorted(newly_ready))
             LOG.info("%d port(s) reported dhcp-ready", len(newly_ready))
