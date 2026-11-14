@@ -548,9 +548,29 @@ class L2popTestCase(unittest.TestCase):
         member = {
             "tap1": {
                 "type": "tap",
-                "bind": {"mac": "fa:16:3e:00:00:0a", "address": "10.42.0.10"},
+                "bind": {"mac": "fa:16:3e:00:00:0a", "addresses": ["10.42.0.10"]},
             }
         }
+        a._program_vxlan(vxlan_config(member=member), agent_mod.plan_mod.Plan())
+        self.assertEqual({5042: ([], {}, ["10.42.0.10"])}, a._relay.tables)
+
+    def test_every_ipv4_address_of_a_member_is_local(self):
+        a = vxlan_agent(self.tmp.name)
+        bind = {"mac": "fa:16:3e:00:00:0a", "addresses": ["10.42.0.11", "10.42.0.10"]}
+        member = {"tap1": {"type": "tap", "bind": bind}}
+        a._program_vxlan(vxlan_config(member=member), agent_mod.plan_mod.Plan())
+        self.assertEqual(
+            {5042: ([], {}, ["10.42.0.10", "10.42.0.11"])}, a._relay.tables
+        )
+
+    def test_an_allowed_address_is_not_a_local_address(self):
+        a = vxlan_agent(self.tmp.name)
+        bind = {
+            "mac": "fa:16:3e:00:00:0a",
+            "addresses": ["10.42.0.10"],
+            "allowed": ["10.42.0.0/24"],
+        }
+        member = {"tap1": {"type": "tap", "bind": bind}}
         a._program_vxlan(vxlan_config(member=member), agent_mod.plan_mod.Plan())
         self.assertEqual({5042: ([], {}, ["10.42.0.10"])}, a._relay.tables)
 
@@ -559,7 +579,7 @@ class L2popTestCase(unittest.TestCase):
         member = {
             "tap1": {
                 "type": "tap",
-                "bind": {"mac": "fa:16:3e:00:00:0a", "address": "10.42.0.10"},
+                "bind": {"mac": "fa:16:3e:00:00:0a", "addresses": ["10.42.0.10"]},
             },
             "tap2": {
                 "type": "tap",

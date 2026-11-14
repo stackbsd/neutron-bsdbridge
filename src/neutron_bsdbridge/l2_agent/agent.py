@@ -385,9 +385,10 @@ class BsdBridgeAgent:
             self._installed[ifname] = installed
             local = sorted(
                 {
-                    m.bind.address
+                    address
                     for m in bridge.member.values()
-                    if m.bind and m.bind.address
+                    if m.bind
+                    for address in m.bind.addresses
                 }
             )
             tables[vni] = (peers, arp, local)

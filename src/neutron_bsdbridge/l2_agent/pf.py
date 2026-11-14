@@ -15,6 +15,7 @@ from neutron_bsdbridge.constants import (
 from neutron_bsdbridge.utils import default_run
 
 ANCHOR_PREFIX = "l2-neutron/port/"
+SOURCE4_TABLE = "source4"
 SOURCE6_TABLE = "source6"
 
 # config direction from the workload's view
@@ -96,21 +97,27 @@ def render(ifname, filt=None, bind=None, tables=None):
     rule_lines = []
     table_lines = []
 
-    if bind is not None and bind.address is not None:
+    sources4 = sources6 = ()
+    if bind is not None:
+        sources4 = sorted({*bind.addresses, *(a for a in bind.allowed if ":" not in a)})
+        sources6 = sorted({*bind.addresses6, *(a for a in bind.allowed if ":" in a)})
+
+    if sources4:
+        table_lines.append(f"table <{SOURCE4_TABLE}> const {{ {', '.join(sources4)} }}")
         # must precede the source lock as DISCOVER is sourced from 0.0.0.0
         rule_lines.append(
             f"pass in quick on {ifname} inet proto udp from 0.0.0.0 "
             f"to 255.255.255.255 port {DHCP_SERVER_PORT} keep state (if-bound) "
             f'label "{state_label(ifname)}"'
         )
-        rule_lines.append(f"block drop in quick on {ifname} inet from ! {bind.address}")
+        rule_lines.append(
+            f"block drop in quick on {ifname} inet from ! <{SOURCE4_TABLE}>"
+        )
     elif bind is not None:
         rule_lines.append(f"block drop in quick on {ifname} inet all")
 
-    if bind is not None and bind.addresses6:
-        table_lines.append(
-            f"table <{SOURCE6_TABLE}> const {{ {', '.join(bind.addresses6)} }}"
-        )
+    if sources6:
+        table_lines.append(f"table <{SOURCE6_TABLE}> const {{ {', '.join(sources6)} }}")
         # must precede the source lock as address detection is sourced from ::
         rule_lines.append(
             f"pass in quick on {ifname} inet6 proto icmp6 from :: to ff02::/16 "

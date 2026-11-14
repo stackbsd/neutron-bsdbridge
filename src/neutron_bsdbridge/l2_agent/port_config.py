@@ -234,13 +234,15 @@ def build(ports, sg_info, interface_mappings, vxlan_conf=None, relay_ports=None)
             v4 = [ip for ip in fixed if ":" not in ip]
             v6 = [ip for ip in fixed if ":" in ip]
             if fixed and port.get("mac_address"):
-                bind = {
+                member["bind"] = {
                     "mac": port["mac_address"],
+                    "addresses": v4,
                     "addresses6": [*v6, link_local(port["mac_address"])],
+                    "allowed": [
+                        str(pair["ip_address"])
+                        for pair in port.get("allowed_address_pairs") or []
+                    ],
                 }
-                if v4:
-                    bind["address"] = v4[0]
-                member["bind"] = bind
         stanza["member"][tap] = member
 
     tables = {}

@@ -9,7 +9,7 @@ Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD base
 - ML2 mechanism driver that binds ports with `vif_type=bridge` and publishes to Nova
 - Implements one bridge per Neutron segment for vlan, flat, vxlan and local networks.
 - L2 agent to manage bridge, taps and security group rules
-- Port security
+- Port security with allowed address pairs
 - DHCP agent running one dnsmasq per network inside separate VNET jails
 - L3 agent running each router inside a VNET jail with SNAT and floating IPs
 - IPv6 subnets in SLAAC, DHCPv6 stateless and DHCPv6 stateful modes, with router advertisements from `rtadvd(8)` in the router jail
@@ -25,7 +25,7 @@ Neutron ML2 mechanism driver, L2 agent, DHCP agent and L3 agent for FreeBSD base
 
 - Distributed routers are unlikely to ever be supported
 - Tenant vxlan networks do not forward application broadcast or multicast traffic - only ARP, DHCPv4, DHCPv6 and IPv6 neighbour discovery is relayed
-- A port with port security sends IPv6 only from its fixed addresses and the link-local address derived from its MAC
+- A port with port security sends IPv6 only from its fixed addresses, its allowed address pairs and the link-local address derived from its MAC
 - A router takes its IPv6 default route from the gateway of the external subnet, not from router advertisements
 
 ## Host requirements

@@ -16,13 +16,13 @@ class CanonicalizationTestCase(unittest.TestCase):
 
     def test_macs_lowercase(self):
         """MACs canonicalize to lowercase."""
-        b = model.Bind(mac="58:9C:FC:10:AA:01", address="10.0.0.1")
+        b = model.Bind(mac="58:9C:FC:10:AA:01", addresses=["10.0.0.1"])
         self.assertEqual("58:9c:fc:10:aa:01", b.mac)
 
     def test_bad_mac_is_refused(self):
         """Malformed MACs are refused."""
         for bad in ("not-a-mac", "58:9c:fc:10:aa", "58:9c:fc:10:aa:zz"):
-            self.assertRaises(ValueError, model.Bind, mac=bad, address="10.0.0.1")
+            self.assertRaises(ValueError, model.Bind, mac=bad, addresses=["10.0.0.1"])
 
     def test_table_members_sorted_and_deduplicated(self):
         """Table members canonicalize to a sorted, de-duplicated list."""
