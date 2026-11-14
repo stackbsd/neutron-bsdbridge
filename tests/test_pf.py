@@ -532,7 +532,7 @@ class VxlanUplinkTestCase(unittest.TestCase):
             "to { 224.0.0.0/4, 255.255.255.255 }",
             lines[2],
         )
-        self.assertIn("icmp6-type { neighbrsol, neighbradv, routersol", lines[3])
+        self.assertIn("icmp6-type { 133, 134, 135, 136 }", lines[3])
         self.assertEqual(
             "block drop out quick on vx1 inet6 from any to ff00::/8 "
             f'label "l2-neutron:cfg:{cfg_hash}"',

@@ -10,7 +10,14 @@ import socket
 import sys
 import time
 
-from neutron_bsdbridge.constants import RELAY_ADDR, RELAY_SOCKET, RELAY_STATE
+from neutron_bsdbridge.constants import (
+    DHCP_CLIENT_PORT,
+    DHCP_SERVER_PORT,
+    ND_TYPES,
+    RELAY_ADDR,
+    RELAY_SOCKET,
+    RELAY_STATE,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -27,9 +34,10 @@ ARP_REQUEST = b"\x00\x01"
 ARP_REPLY = b"\x00\x02"
 IPPROTO_UDP = 17
 IPPROTO_ICMPV6 = 58
-DHCP_PORTS = ((68, 67), (67, 68))
-# router solicitation and advertisement, neighbour solicitation and advertisement
-ND_TYPES = (133, 134, 135, 136)
+DHCP_PORTS = (
+    (DHCP_CLIENT_PORT, DHCP_SERVER_PORT),
+    (DHCP_SERVER_PORT, DHCP_CLIENT_PORT),
+)
 
 
 @dataclasses.dataclass

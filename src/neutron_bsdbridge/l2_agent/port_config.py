@@ -129,7 +129,9 @@ def sg_rules_for_port(port, sg_info, tables_used):
 def infra_rules():
     """Return the per-port allowances for DHCP clients and neighbor discovery."""
     tables = []
-    for ports, types in (((68, 546), ICMP6_IN), ((67, 547), ICMP6_OUT)):
+    client = (constants.DHCP_CLIENT_PORT, constants.DHCPV6_CLIENT_PORT)
+    server = (constants.DHCP_SERVER_PORT, constants.DHCPV6_SERVER_PORT)
+    for ports, types in ((client, ICMP6_IN), (server, ICMP6_OUT)):
         bodies = [
             {"action": "pass", "family": "inet", "proto": "udp", "port": ports[0]},
             {"action": "pass", "family": "inet6", "proto": "udp", "port": ports[1]},
